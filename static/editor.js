@@ -8,11 +8,8 @@
   const previewContainer = document.getElementById('preview-container');
   const characterCount = document.getElementById('characterCount');
 
-  // onload, reset to editorTab since we can't be sure preview tab will be populated
+  // onload, reset to editorTab
   editorTab.click();
-
-  // hide paste textarea
-  textArea.style.display = 'none';
 
   const editor = new CodeMirror(cmEl, {
     mode: 'markdown',
@@ -22,10 +19,8 @@
     viewportMargin: Infinity
   });
 
-  // attach editor to window
   window.cmEditor = editor;
 
-  // initialize characterCount
   const updateCharacterCount = (count) => {
     characterCount.innerText = `${count}/${MAX_LENGTH}`;
   };
@@ -36,16 +31,13 @@
     textArea.value = value;
   }, 1500);
 
-  // set onChange to update text area with editor text
-  // this is helpful for persistence across page reloads
-  const onChange = (instance, change) => {
-    const value = instance.getValue();
+  const onChange = (_instance, _change) => {
+    const value = editor.getValue();
     textArea.value = value;
     updateCharacterCount(value.length);
     updateTextArea(value);
   };
 
-  // this is a long-winded way of implementing a max-length on CodeMirror
   const onBeforeChange = (instance, change) => {
     if (change.update) {
       const newLine = instance.getDoc().lineSeparator();
@@ -66,25 +58,41 @@
   editor.on('change', onChange);
   editor.on('beforeChange', onBeforeChange);
 
-  // set event listener to refresh editor on tab select
   editorTab.addEventListener('click', () => {
     editor.refresh();
   });
 
-  // override form submit
   editorForm.addEventListener('submit', (ev) => {
     ev.preventDefault();
-
-    // set textarea to ensure it is up to date
     textArea.value = editor.getValue();
-
     editorForm.submit();
   });
 
-  // populate preview tab when activating it
   previewTab.addEventListener('change', () => {
-    previewContainer.innerHTML = marked.parse(editor.getValue(), { breaks: true });
+    const raw = marked.parse(editor.getValue(), { breaks: true });
+    previewContainer.innerHTML = sanitizeHtml(raw);
   });
+
+  function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script,iframe,object,embed,style').forEach(
+      (el) => el.remove()
+    );
+    doc.querySelectorAll('*').forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('on')) {
+          el.removeAttribute(attr.name);
+        }
+        if (
+          ['href', 'src', 'action'].includes(attr.name) &&
+          el.getAttribute(attr.name).trim().toLowerCase().startsWith('javascript:')
+        ) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    });
+    return doc.body.innerHTML;
+  }
 
   function debounce(cb, wait) {
     let timer;
