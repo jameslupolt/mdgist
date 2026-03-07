@@ -1,6 +1,6 @@
-# mdbin
+# mdgist
 
-A pastebin for Markdown. Allows creation and sharing of Markdown instantly, and locking documents with edit codes.
+A raw markdown pastebin. Create and share Markdown instantly, lock documents with edit codes.
 
 Easily and freely self-hostable on Deno Deploy.
 

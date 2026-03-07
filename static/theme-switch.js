@@ -1,28 +1,27 @@
-(({ cmEditor }) => {
-  const darkSwitchId = 'darkSwitch';
-  const darkSwitch = document.getElementById(darkSwitchId);
+(() => {
+  const KEY = 'mdgist-theme';
+  const btn = document.getElementById('darkSwitch');
 
-  const setMode = mode => {
-    localStorage.setItem(darkSwitchId, mode);
+  const setMode = (mode) => {
+    localStorage.setItem(KEY, mode);
     document.body.setAttribute('data-theme', mode);
 
-    if (cmEditor) {
-      cmEditor.setOption("theme", mode === 'd' ? 'material' : 'default');
+    if (window.cmEditor) {
+      window.cmEditor.setOption('theme', mode === 'd' ? 'material' : 'default');
     }
   };
 
-  let mode = localStorage.getItem(darkSwitchId);
-  if (mode) {
-    darkSwitch.checked = mode === 'd';
-  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    mode = 'd';
-  } else {
-    mode = 'l';
+  let mode = localStorage.getItem(KEY);
+  if (!mode) {
+    mode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'd'
+      : 'l';
   }
 
   setMode(mode);
 
-  darkSwitch.addEventListener('change', () => {
-    setMode(darkSwitch.checked ? 'd' : 'l');
+  btn.addEventListener('click', () => {
+    mode = mode === 'd' ? 'l' : 'd';
+    setMode(mode);
   });
-})(window);
+})();

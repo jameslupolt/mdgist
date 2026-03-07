@@ -1,14 +1,14 @@
-# mdbin guide
+# mdgist guide
 
-`mdbin` is a [Markdown](https://en.wikipedia.org/wiki/Markdown) pastebin. It is heavily inspired by [rentry.co](https://rentry.co), but is [free and open-source](https://github.com/kevinfiol/mdbin), and easily self-hostable.
+`mdgist` is a [Markdown](https://en.wikipedia.org/wiki/Markdown) pastebin. It is heavily inspired by [rentry.co](https://rentry.co), but is [free and open-source](https://github.com/kevinfiol/mdbin), and easily self-hostable.
 
-`mdbin` uses [marked.js](https://marked.js.org/#specifications) for Markdown parsing, and thus supports all features of marked.js.
+`mdgist` uses [marked.js](https://marked.js.org/#specifications) for Markdown parsing, and thus supports all features of marked.js.
 
 The following guide has been adapted with modifications from [learnxinyminutes](https://learnxinyminutes.com/docs/markdown/).
 
 <div class="toc">
    <ul>
-      <li><a href="#mdbin-guide">mdbin guide</a></li>
+      <li><a href="#mdgist-guide">mdgist guide</a></li>
       <ul>
         <li><a href="#custom-urls">Custom URLs</a></li>
         <li><a href="#edit-codes">Edit Codes</a></li>
@@ -44,7 +44,7 @@ If a custom edit code is not provided, anyone can edit or delete your paste.
 
 ## HTML Elements
 
-Markdown is a superset of HTML, so any HTML file is valid Markdown. `mdbin` automatically sanitizes untrusted HTML.
+Markdown is a superset of HTML, so any HTML file is valid Markdown. `mdgist` automatically sanitizes untrusted HTML.
 
 ```md
 <!--This means we can use HTML elements in Markdown, such as the comment
@@ -210,7 +210,7 @@ And reference style links:
   - [Subchapter <h3 />](#subchapter-h3-)
 ```
 
-`mdbin` also supports automatically generated table of contents using the `[[[TOC]]]` token. For example, typing this:
+`mdgist` also supports automatically generated table of contents using the `[[[TOC]]]` token. For example, typing this:
 
 ```md
 Here is the table of contents:
