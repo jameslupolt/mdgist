@@ -1,15 +1,17 @@
 {
   "tasks": {
-    "flags": "deno run --allow-env --allow-net --unstable-kv --allow-read",
+    "flags": "deno run --allow-env --allow-net --unstable-kv --unstable-cron --allow-read",
     "start": "deno task flags main.ts",
     "debug": "deno task flags --inspect-brk main.ts",
     "dev": "deno task flags --watch main.ts"
   },
   "imports": {
-    "std/": "https://deno.land/std@0.202.0/",
-    "lz": "https://esm.sh/v135/lz-string@1.5.0",
-    "marked": "https://esm.sh/v135/marked@9.0.3",
-    "xss": "https://esm.sh/v135/xss@1.0.14"
+    "@std/path": "jsr:@std/path@^1.1.4",
+    "@std/fs": "jsr:@std/fs@^1.0.23",
+    "@std/dotenv": "jsr:@std/dotenv@^0.225.6",
+    "lz": "https://esm.sh/lz-string@1.5.0",
+    "marked": "https://esm.sh/marked@17.0.4",
+    "xss": "https://esm.sh/xss@1.0.15"
   },
   "lint": {
     "include": [
