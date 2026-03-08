@@ -52,6 +52,7 @@ const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) 
         <nav>
           <a href="/">New</a>
           <a href="/guide">Guide</a>
+          <a href="/cli">CLI</a>
         </nav>
         <button id="darkSwitch" class="theme-toggle" type="button" aria-label="Toggle theme">
           <span class="theme-icon"></span>
@@ -132,11 +133,10 @@ export const homePage = ({
         </div>
         <div class="form-group">
           <select name="ttl" class="ttl-select">
-            <option value="">No expiry</option>
             <option value="3600000">1 hour</option>
             <option value="86400000">1 day</option>
             <option value="604800000">1 week</option>
-            <option value="2592000000">30 days</option>
+            <option value="2592000000" selected>30 days</option>
           </select>
         </div>
       <div class="form-actions">
@@ -151,7 +151,7 @@ export const homePage = ({
   <script src="/editor.js"></script>
 `);
 
-export const pastePage = ({ id = '', html = '', title = '' } = {}) => {
+export const pastePage = ({ id = '', html = '', title = '', hasEditCode = false } = {}) => {
   return layout(title, `
   <main>
     <article class="paste-container">
@@ -161,7 +161,7 @@ export const pastePage = ({ id = '', html = '', title = '' } = {}) => {
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/raw">Raw</a>
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/edit">Edit</a>
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/history">History</a>
-      <a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>
+      ${_if(hasEditCode, `<a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>`)}
     </div>
   </main>
 `);

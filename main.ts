@@ -35,6 +35,7 @@ const MIN_PASSWORD_LENGTH = 3;
 const MAX_PASSWORD_LENGTH = 128;
 const RATE_LIMIT = 1000;
 const RATE_WINDOW = 60_000;
+const DEFAULT_TTL = 2_592_000_000;
 const ALLOWED_TTL_VALUES = new Set([
   3_600_000,
   86_400_000,
@@ -43,6 +44,7 @@ const ALLOWED_TTL_VALUES = new Set([
 ]);
 const RESERVED_SLUGS = new Set([
   'guide',
+  'cli',
   'api',
   'raw',
   'edit',
@@ -144,8 +146,8 @@ const metrics = {
   rateLimited: 0,
 };
 
-function parseTtl(raw: unknown): number | undefined | null {
-  if (raw === undefined || raw === null || raw === '') return undefined;
+function parseTtl(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_TTL;
   const ttl = Number(raw);
   if (!Number.isInteger(ttl) || ttl <= 0 || !ALLOWED_TTL_VALUES.has(ttl)) {
     return null;
@@ -310,6 +312,18 @@ app.get('/guide', async () => {
   });
 });
 
+// CLI
+app.get('/cli', async () => {
+  const cliMd = await Deno.readTextFile('./cli.md');
+  const parse = createParser();
+  const { html, title } = parse(cliMd, { toc: false });
+
+  return new Response(guidePage({ html, title }), {
+    status: 200,
+    headers: HTML_HEADERS,
+  });
+});
+
 // View paste
 app.get('/:id', async (req, params) => {
   const id = params.id as string ?? '';
@@ -332,7 +346,7 @@ app.get('/:id', async (req, params) => {
       html = xss(html, XSS_OPTIONS);
       if (!title) title = id;
 
-      return new Response(pastePage({ id, html, title }), {
+      return new Response(pastePage({ id, html, title, hasEditCode: Boolean(res.value.editCodeHash) }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -390,6 +404,10 @@ app.get('/:id/delete', async (req, params) => {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      if (!res.value.editCodeHash) {
+        return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+      }
+
       const access = await hasPastePasswordAccess(
         req,
         id,
@@ -398,9 +416,7 @@ app.get('/:id/delete', async (req, params) => {
       if (!access.ok) return lockedPage(id, `/${id}/delete`);
       if (access.bootstrap) return access.bootstrap;
 
-      const { editCodeHash } = res.value;
-      const hasEditCode = Boolean(editCodeHash);
-      return new Response(deletePage({ id, hasEditCode }), {
+      return new Response(deletePage({ id, hasEditCode: true }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -980,20 +996,20 @@ app.post('/:id/delete', async (req, params) => {
     const res = await storage.get(id);
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers });
+
+    const existing = res.value;
+    if (!existing.editCodeHash) {
+      return new Response(errorPage(), { status: 404, headers });
     }
 
     const access = await hasPastePasswordAccess(
       req,
       id,
-      res.value.passwordHash,
+      existing.passwordHash,
     );
     if (!access.ok) return lockedPage(id, `/${id}/delete`);
     if (access.bootstrap) return access.bootstrap;
 
-    const existing = res.value;
-    const hasEditCode = Boolean(existing.editCodeHash);
-
-    if (hasEditCode) {
       if (
         !editCode ||
         !(await verifyEditCode(editCode, existing.editCodeHash!))
