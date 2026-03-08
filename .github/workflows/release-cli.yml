@@ -3,7 +3,7 @@ name: Release CLI
 on:
   push:
     tags:
-      - "cli/v*"
+      - "v*"
 
 permissions:
   contents: write
@@ -24,6 +24,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean -f cli/.goreleaser.yml
+          args: release --clean
+          workdir: cli
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
