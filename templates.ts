@@ -139,6 +139,13 @@ export const homePage = ({
             <option value="2592000000" selected>30 days</option>
           </select>
         </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" name="history" value="1" />
+            Edit history
+          </label>
+        </div>
+      </div>
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save</button>
       </div>
