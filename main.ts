@@ -5,9 +5,10 @@ import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
 import { Router } from './router.ts';
 import {
-  hashPassword,
+  hashOwnerToken,
   storage,
   verifyEditCode,
+  verifyOwnerToken,
   verifyPassword,
 } from './storage.ts';
 import {
@@ -201,6 +202,35 @@ function resolvePassword(req: Request, id: string): string | undefined {
     normalizePassword(getCookie(req, passwordCookieName(id)));
 }
 
+function generateOwnerToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+function ownerCookieName(id: string): string {
+  return `mdgist_owner_${id}`;
+}
+
+function buildOwnerCookie(
+  req: Request,
+  id: string,
+  token: string,
+): string {
+  const secure = new URL(req.url).protocol === 'https:' ? '; Secure' : '';
+  return `${ownerCookieName(id)}=${encodeURIComponent(token)}; Path=/${
+    encodeURIComponent(id)
+  }; HttpOnly; SameSite=Lax; Max-Age=2592000${secure}`;
+}
+
+async function resolveOwnerCookie(req: Request, id: string): Promise<boolean> {
+  const token = getCookie(req, ownerCookieName(id));
+  if (!token) return false;
+  const storedHash = await storage.getOwnerTokenHash(id);
+  if (!storedHash) return false;
+  return verifyOwnerToken(token, storedHash);
+}
+
 function sanitizeNextPath(id: string, next?: string): string {
   if (!next) return `/${id}`;
   if (next === `/${id}` || next.startsWith(`/${id}/`)) return next;
@@ -346,7 +376,10 @@ app.get('/:id', async (req, params) => {
       html = xss(html, XSS_OPTIONS);
       if (!title) title = id;
 
-      return new Response(pastePage({ id, html, title, hasEditCode: Boolean(res.value.editCodeHash), history: Boolean(res.value.history) }), {
+      const isOwner = await resolveOwnerCookie(req, id);
+      const canDelete = isOwner || Boolean(res.value.editCodeHash);
+
+      return new Response(pastePage({ id, html, title, canDelete, history: Boolean(res.value.history) }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -404,10 +437,6 @@ app.get('/:id/delete', async (req, params) => {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      if (!res.value.editCodeHash) {
-        return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
-      }
-
       const access = await hasPastePasswordAccess(
         req,
         id,
@@ -416,7 +445,14 @@ app.get('/:id/delete', async (req, params) => {
       if (!access.ok) return lockedPage(id, `/${id}/delete`);
       if (access.bootstrap) return access.bootstrap;
 
-      return new Response(deletePage({ id, hasEditCode: true }), {
+      const isOwner = await resolveOwnerCookie(req, id);
+      const hasEditCode = Boolean(res.value.editCodeHash);
+
+      if (!isOwner && !hasEditCode) {
+        return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+      }
+
+      return new Response(deletePage({ id, isOwner, hasEditCode }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -702,6 +738,9 @@ app.post('/save', async (req) => {
       }
 
       await storage.set(slug, paste, editCode, ttl, password);
+      const ownerToken = generateOwnerToken();
+      await storage.setOwnerToken(slug, await hashOwnerToken(ownerToken), ttl ?? undefined);
+      headers.set('set-cookie', buildOwnerCookie(req, slug, ownerToken));
       headers.set('location', '/' + slug.trim());
       return new Response('', { status: 302, headers });
     }
@@ -715,6 +754,9 @@ app.post('/save', async (req) => {
     }
 
     await storage.set(id, paste, editCode, ttl, password);
+    const ownerToken = generateOwnerToken();
+    await storage.setOwnerToken(id, await hashOwnerToken(ownerToken), ttl ?? undefined);
+    headers.set('set-cookie', buildOwnerCookie(req, id, ownerToken));
     headers.set('location', '/' + id.trim());
     return new Response('', { status: 302, headers });
   } catch (error) {
@@ -800,11 +842,14 @@ app.post('/api/save', async (req) => {
       }
 
       await storage.set(slug, paste, editCode, ttl, password);
+      const ownerToken = generateOwnerToken();
+      await storage.setOwnerToken(slug, await hashOwnerToken(ownerToken), ttl ?? undefined);
       return new Response(
         JSON.stringify({
           id: slug,
           url: '/' + slug,
           hasPassword: Boolean(password),
+          ownerToken,
         }),
         {
           status: 201,
@@ -821,11 +866,14 @@ app.post('/api/save', async (req) => {
     }
 
     await storage.set(id, paste, editCode, ttl, password);
+    const ownerToken = generateOwnerToken();
+    await storage.setOwnerToken(id, await hashOwnerToken(ownerToken), ttl ?? undefined);
     return new Response(
       JSON.stringify({
         id,
         url: '/' + id,
         hasPassword: Boolean(password),
+        ownerToken,
       }),
       {
         status: 201,
@@ -996,12 +1044,9 @@ app.post('/:id/delete', async (req, params) => {
     const res = await storage.get(id);
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers });
-
-    const existing = res.value;
-    if (!existing.editCodeHash) {
-      return new Response(errorPage(), { status: 404, headers });
     }
 
+    const existing = res.value;
     const access = await hasPastePasswordAccess(
       req,
       id,
@@ -1010,19 +1055,34 @@ app.post('/:id/delete', async (req, params) => {
     if (!access.ok) return lockedPage(id, `/${id}/delete`);
     if (access.bootstrap) return access.bootstrap;
 
-      if (
-        !editCode ||
-        !(await verifyEditCode(editCode, existing.editCodeHash!))
-      ) {
-        return new Response(
-          deletePage({
-            id,
-            hasEditCode,
-            errors: { editCode: 'Invalid edit code' },
-          }),
-          { status: 400, headers },
-        );
-      }
+    const isOwner = await resolveOwnerCookie(req, id);
+    const hasEditCode = Boolean(existing.editCodeHash);
+
+    // Owner can delete without edit code
+    if (isOwner) {
+      await storage.delete(id);
+      headers.set('location', '/');
+      return new Response('', { status: 302, headers });
+    }
+
+    // Non-owner needs valid edit code
+    if (!hasEditCode) {
+      return new Response(errorPage(), { status: 404, headers });
+    }
+
+    if (
+      !editCode ||
+      !(await verifyEditCode(editCode, existing.editCodeHash!))
+    ) {
+      return new Response(
+        deletePage({
+          id,
+          isOwner: false,
+          hasEditCode,
+          errors: { editCode: 'Invalid edit code' },
+        }),
+        { status: 400, headers },
+      );
     }
 
     await storage.delete(id);
