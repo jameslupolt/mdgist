@@ -31,13 +31,16 @@ const Editor = (paste = '') => `
   </div>
 `;
 
-const layout = (title: string, content: string) => `
+const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) => `
   <!DOCTYPE html>
   <html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="raw markdown pastebin">
+    <meta property="og:title" content="${escapeHtml(title) || 'mdgist'}">
+    <meta property="og:description" content="${escapeHtml(meta.ogDesc || 'raw markdown pastebin')}">
+    <meta property="og:type" content="website">
     <link rel="stylesheet" href="/codemirror.min.css">
     <link rel="stylesheet" href="/main.css">
     <title>${escapeHtml(title) || 'mdgist'}</title>
@@ -110,6 +113,15 @@ export const homePage = ({
           />
         </div>
       </div>
+      <div class="form-group">
+        <select name="ttl" class="ttl-select">
+          <option value="">No expiry</option>
+          <option value="3600000">1 hour</option>
+          <option value="86400000">1 day</option>
+          <option value="604800000">1 week</option>
+          <option value="2592000000">30 days</option>
+        </select>
+      </div>
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save</button>
@@ -131,6 +143,7 @@ export const pastePage = ({ id = '', html = '', title = '' } = {}) => layout(tit
     <div class="form-actions">
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/raw">Raw</a>
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/edit">Edit</a>
+      <a class="btn btn-secondary" href="/${escapeHtml(id)}/history">History</a>
       <a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>
     </div>
   </main>
@@ -229,5 +242,27 @@ export const errorPage = () => layout('404', `
     <h1>404</h1>
     <p>That paste doesn't exist. Maybe it was deleted?</p>
     <a href="/" class="btn btn-primary">Create a new paste</a>
+  </main>
+`);
+
+export const historyPage = ({ id = '', versions = [] as { timestamp: number }[] } = {}) => layout(`History - ${id}`, `
+  <main>
+    <div class="paste-container">
+      <h1>History &mdash; ${escapeHtml(id)}</h1>
+      ${versions.length === 0 ? '<p>No edit history yet.</p>' : `
+        <ul class="history-list">
+          ${versions.map((v: { timestamp: number }) => `
+            <li>
+              <a href="/${escapeHtml(id)}/history/${v.timestamp}">
+                ${new Date(v.timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')}
+              </a>
+            </li>
+          `).join('')}
+        </ul>
+      `}
+      <div class="form-actions">
+        <a class="btn btn-secondary" href="/${escapeHtml(id)}">Back to paste</a>
+      </div>
+    </div>
   </main>
 `);

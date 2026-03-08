@@ -50,7 +50,7 @@ export const storage = {
     return result;
   },
 
-  async set(id: string, paste: string, editCode?: string) {
+  async set(id: string, paste: string, editCode?: string, expireIn?: number) {
     const compressed = lz.compress(paste) as string;
     const entry: Paste = { paste: compressed };
 
@@ -58,10 +58,16 @@ export const storage = {
       entry.editCodeHash = await hashEditCode(editCode);
     }
 
-    return await KV.set([id], entry);
+    return await KV.set([id], entry, expireIn ? { expireIn } : undefined);
   },
 
   async update(id: string, paste: string, editCodeHash?: string) {
+    // Save current version to history before overwriting
+    const current = await KV.get<Paste>([id]);
+    if (current.value) {
+      await KV.set([id, 'history', Date.now()], current.value);
+    }
+
     const compressed = lz.compress(paste) as string;
     const entry: Paste = { paste: compressed };
 
@@ -74,5 +80,21 @@ export const storage = {
 
   async delete(id: string) {
     return await KV.delete([id]);
+  },
+
+  async getHistory(id: string) {
+    const versions: { timestamp: number }[] = [];
+    for await (const entry of KV.list({ prefix: [id, 'history'] })) {
+      versions.push({ timestamp: entry.key[2] as number });
+    }
+    return versions.sort((a, b) => b.timestamp - a.timestamp);
+  },
+
+  async getVersion(id: string, timestamp: number) {
+    const result = await KV.get<Paste>([id, 'history', timestamp]);
+    if (result.value !== null) {
+      result.value.paste = lz.decompress(result.value.paste);
+    }
+    return result;
   },
 };

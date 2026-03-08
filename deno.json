@@ -12,7 +12,8 @@
     "@std/dotenv": "jsr:@std/dotenv@^0.225.6",
     "lz": "https://esm.sh/lz-string@1.5.0",
     "marked": "https://esm.sh/marked@17.0.4",
-    "xss": "https://esm.sh/xss@1.0.15"
+    "xss": "https://esm.sh/xss@1.0.15",
+    "highlight.js": "https://esm.sh/highlight.js@11.11.1"
   },
   "lint": {
     "include": [

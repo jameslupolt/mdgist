@@ -1,5 +1,6 @@
 import xss from 'xss';
 import { Marked } from 'marked';
+import hljs from 'highlight.js';
 import { resolve } from '@std/path';
 import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
@@ -10,6 +11,7 @@ import {
   editPage,
   errorPage,
   guidePage,
+  historyPage,
   homePage,
   pastePage,
 } from './templates.ts';
@@ -45,6 +47,9 @@ const XSS_OPTIONS = {
     h6: ['id'],
     input: ['disabled', 'type', 'checked'],
     div: ['class'],
+    span: ['class'],
+    code: ['class'],
+    pre: ['class'],
   },
 };
 
@@ -105,8 +110,12 @@ const SECURITY_HEADERS: Record<string, string> = {
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
 };
 
+const HTML_HEADERS = { 'content-type': 'text/html' };
+const JSON_HEADERS = { 'content-type': 'application/json' };
+
 const app = new Router(SECURITY_HEADERS);
 
+// Static files
 app.get('*', async (req) => {
   const url = new URL(req.url);
   const filepath = FILES.get(url.pathname);
@@ -118,18 +127,23 @@ app.get('*', async (req) => {
     const readableStream = file.readable;
     return new Response(readableStream, {
       status: 200,
-      headers: { 'content-type': contentType },
+      headers: {
+        'content-type': contentType,
+        'cache-control': 'public, max-age=86400',
+      },
     });
   }
 });
 
+// Home
 app.get('/', () => {
   return new Response(homePage(), {
     status: 200,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// Guide
 app.get('/guide', async () => {
   const guideMd = await Deno.readTextFile('./guide.md');
   const parse = createParser();
@@ -137,90 +151,196 @@ app.get('/guide', async () => {
 
   return new Response(guidePage({ html, title }), {
     status: 200,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// View paste
 app.get('/:id', async (_req, params) => {
   const id = params.id as string ?? '';
-  const res = await storage.get(id);
 
-  if (res.value !== null) {
-    const parse = createParser();
-    const { paste } = res.value;
-    let { html, title } = parse(paste);
-    html = xss(html, XSS_OPTIONS);
-    if (!title) title = id;
+  try {
+    const res = await storage.get(id);
 
-    return new Response(pastePage({ id, html, title }), {
-      status: 200,
-      headers: { 'content-type': 'text/html' },
-    });
+    if (res.value !== null) {
+      const parse = createParser();
+      const { paste } = res.value;
+      let { html, title } = parse(paste);
+      html = xss(html, XSS_OPTIONS);
+      if (!title) title = id;
+
+      return new Response(pastePage({ id, html, title }), {
+        status: 200,
+        headers: HTML_HEADERS,
+      });
+    }
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
   }
 
   return new Response(errorPage(), {
     status: 404,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// Edit paste
 app.get('/:id/edit', async (_req, params) => {
   const id = params.id as string ?? '';
-  const res = await storage.get(id);
 
-  if (res.value !== null) {
-    const { editCodeHash, paste } = res.value;
-    const hasEditCode = Boolean(editCodeHash);
-    return new Response(editPage({ id, paste, hasEditCode }), {
-      status: 200,
-      headers: { 'content-type': 'text/html' },
-    });
+  try {
+    const res = await storage.get(id);
+
+    if (res.value !== null) {
+      const { editCodeHash, paste } = res.value;
+      const hasEditCode = Boolean(editCodeHash);
+      return new Response(editPage({ id, paste, hasEditCode }), {
+        status: 200,
+        headers: HTML_HEADERS,
+      });
+    }
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
   }
 
   return new Response(errorPage(), {
     status: 404,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// Delete paste page
 app.get('/:id/delete', async (_req, params) => {
   const id = params.id as string ?? '';
-  const res = await storage.get(id);
 
-  if (res.value !== null) {
-    const { editCodeHash } = res.value;
-    const hasEditCode = Boolean(editCodeHash);
-    return new Response(deletePage({ id, hasEditCode }), {
-      status: 200,
-      headers: { 'content-type': 'text/html' },
-    });
+  try {
+    const res = await storage.get(id);
+
+    if (res.value !== null) {
+      const { editCodeHash } = res.value;
+      const hasEditCode = Boolean(editCodeHash);
+      return new Response(deletePage({ id, hasEditCode }), {
+        status: 200,
+        headers: HTML_HEADERS,
+      });
+    }
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
   }
 
   return new Response(errorPage(), {
     status: 404,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// Raw paste
 app.get('/:id/raw', async (_req, params) => {
   const id = params.id as string ?? '';
-  const res = await storage.get(id);
 
-  if (res.value !== null) {
-    return new Response(res.value.paste, {
-      status: 200,
-      headers: { 'content-type': 'text/plain' },
-    });
+  try {
+    const res = await storage.get(id);
+
+    if (res.value !== null) {
+      return new Response(res.value.paste, {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      });
+    }
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
   }
 
   return new Response(errorPage(), {
     status: 404,
-    headers: { 'content-type': 'text/html' },
+    headers: HTML_HEADERS,
   });
 });
 
+// Edit history list
+app.get('/:id/history', async (_req, params) => {
+  const id = params.id as string ?? '';
+
+  try {
+    const res = await storage.get(id);
+    if (res.value === null) {
+      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+    }
+
+    const versions = await storage.getHistory(id);
+    return new Response(historyPage({ id, versions }), {
+      status: 200,
+      headers: HTML_HEADERS,
+    });
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
+  }
+});
+
+// View specific history version
+app.get('/:id/history/:timestamp', async (_req, params) => {
+  const id = params.id as string ?? '';
+  const timestamp = Number(params.timestamp);
+
+  if (isNaN(timestamp)) {
+    return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+  }
+
+  try {
+    const res = await storage.getVersion(id, timestamp);
+
+    if (res.value !== null) {
+      const parse = createParser();
+      const { paste } = res.value;
+      let { html, title } = parse(paste);
+      html = xss(html, XSS_OPTIONS);
+      if (!title) title = `${id} (${new Date(timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')})`;
+
+      return new Response(pastePage({ id, html, title }), {
+        status: 200,
+        headers: HTML_HEADERS,
+      });
+    }
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
+  }
+
+  return new Response(errorPage(), {
+    status: 404,
+    headers: HTML_HEADERS,
+  });
+});
+
+// API: Get paste
+app.get('/api/:id', async (_req, params) => {
+  const id = params.id as string ?? '';
+
+  try {
+    const res = await storage.get(id);
+
+    if (res.value !== null) {
+      return new Response(JSON.stringify({
+        id,
+        paste: res.value.paste,
+        hasEditCode: Boolean(res.value.editCodeHash),
+      }), { status: 200, headers: JSON_HEADERS });
+    }
+  } catch {
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      status: 500,
+      headers: JSON_HEADERS,
+    });
+  }
+
+  return new Response(JSON.stringify({ error: 'Not found' }), {
+    status: 404,
+    headers: JSON_HEADERS,
+  });
+});
+
+// Create paste (form)
 app.post('/save', async (req) => {
-  const headers = new Headers({ 'content-type': 'text/html' });
+  const headers = new Headers(HTML_HEADERS);
 
   let form: FormData;
   try {
@@ -232,6 +352,8 @@ app.post('/save', async (req) => {
   const customUrl = (form.get('url') as string) ?? '';
   const paste = (form.get('paste') as string) ?? '';
   const slug = createSlug(customUrl);
+  const ttlRaw = (form.get('ttl') as string) ?? '';
+  const ttl = ttlRaw ? Number(ttlRaw) : undefined;
 
   if (paste.length > MAX_PASTE_SIZE) {
     return new Response(
@@ -251,41 +373,106 @@ app.post('/save', async (req) => {
     editCode = editCode.trim() || undefined;
   }
 
-  if (slug.length > 0) {
-    const res = await storage.get(slug);
+  try {
+    if (slug.length > 0) {
+      const res = await storage.get(slug);
 
-    if (slug === 'guide' || res.value !== null) {
-      return new Response(
-        homePage({
-          paste,
-          url: customUrl,
-          errors: { url: `URL unavailable: ${customUrl}` },
-        }),
-        { status: 422, headers },
-      );
+      if (slug === 'guide' || slug === 'api' || res.value !== null) {
+        return new Response(
+          homePage({
+            paste,
+            url: customUrl,
+            errors: { url: `URL unavailable: ${customUrl}` },
+          }),
+          { status: 422, headers },
+        );
+      }
+
+      await storage.set(slug, paste, editCode, ttl);
+      headers.set('location', '/' + slug.trim());
+      return new Response('', { status: 302, headers });
     }
 
-    await storage.set(slug, paste, editCode);
-    headers.set('location', '/' + slug.trim());
+    let id = '';
+    let exists = true;
+
+    for (; exists;) {
+      id = generateId();
+      exists = await storage.get(id).then((r) => r.value !== null);
+    }
+
+    await storage.set(id, paste, editCode, ttl);
+    headers.set('location', '/' + id.trim());
     return new Response('', { status: 302, headers });
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
   }
-
-  let id = '';
-  let exists = true;
-
-  for (; exists;) {
-    id = generateId();
-    exists = await storage.get(id).then((r) => r.value !== null);
-  }
-
-  await storage.set(id, paste, editCode);
-  headers.set('location', '/' + id.trim());
-  return new Response('', { status: 302, headers });
 });
 
+// API: Create paste (JSON)
+app.post('/api/save', async (req) => {
+  try {
+    const body = await req.json();
+    const paste = (body.paste as string) ?? '';
+    const customUrl = (body.url as string) ?? '';
+    const editCode = (body.editCode as string) ?? undefined;
+    const ttl = body.ttl ? Number(body.ttl) : undefined;
+    const slug = createSlug(customUrl);
+
+    if (paste.length === 0) {
+      return new Response(JSON.stringify({ error: 'Paste content required' }), {
+        status: 400,
+        headers: JSON_HEADERS,
+      });
+    }
+
+    if (paste.length > MAX_PASTE_SIZE) {
+      return new Response(JSON.stringify({ error: `Paste exceeds ${MAX_PASTE_SIZE} characters` }), {
+        status: 422,
+        headers: JSON_HEADERS,
+      });
+    }
+
+    if (slug.length > 0) {
+      const res = await storage.get(slug);
+      if (slug === 'guide' || slug === 'api' || res.value !== null) {
+        return new Response(JSON.stringify({ error: `URL unavailable: ${customUrl}` }), {
+          status: 422,
+          headers: JSON_HEADERS,
+        });
+      }
+
+      await storage.set(slug, paste, editCode, ttl);
+      return new Response(JSON.stringify({ id: slug, url: '/' + slug }), {
+        status: 201,
+        headers: JSON_HEADERS,
+      });
+    }
+
+    let id = '';
+    let exists = true;
+    for (; exists;) {
+      id = generateId();
+      exists = await storage.get(id).then((r) => r.value !== null);
+    }
+
+    await storage.set(id, paste, editCode, ttl);
+    return new Response(JSON.stringify({ id, url: '/' + id }), {
+      status: 201,
+      headers: JSON_HEADERS,
+    });
+  } catch {
+    return new Response(JSON.stringify({ error: 'Bad request' }), {
+      status: 400,
+      headers: JSON_HEADERS,
+    });
+  }
+});
+
+// Update paste
 app.post('/:id/save', async (req, params) => {
   const id = params.id as string ?? '';
-  const headers = new Headers({ 'content-type': 'text/html' });
+  const headers = new Headers(HTML_HEADERS);
 
   if (id.trim().length === 0) {
     headers.set('location', '/');
@@ -310,39 +497,44 @@ app.post('/:id/save', async (req, params) => {
     editCode = editCode.trim() || undefined;
   }
 
-  const res = await storage.get(id);
-  if (res.value === null) {
-    return new Response(errorPage(), { status: 404, headers });
-  }
-
-  const existing = res.value;
-  const hasEditCode = Boolean(existing.editCodeHash);
-
-  if (hasEditCode) {
-    if (
-      !editCode ||
-      !(await verifyEditCode(editCode, existing.editCodeHash!))
-    ) {
-      return new Response(
-        editPage({
-          id,
-          paste,
-          hasEditCode,
-          errors: { editCode: 'Invalid edit code' },
-        }),
-        { status: 400, headers },
-      );
+  try {
+    const res = await storage.get(id);
+    if (res.value === null) {
+      return new Response(errorPage(), { status: 404, headers });
     }
-  }
 
-  await storage.update(id, paste, existing.editCodeHash);
-  headers.set('location', '/' + id);
-  return new Response('', { status: 302, headers });
+    const existing = res.value;
+    const hasEditCode = Boolean(existing.editCodeHash);
+
+    if (hasEditCode) {
+      if (
+        !editCode ||
+        !(await verifyEditCode(editCode, existing.editCodeHash!))
+      ) {
+        return new Response(
+          editPage({
+            id,
+            paste,
+            hasEditCode,
+            errors: { editCode: 'Invalid edit code' },
+          }),
+          { status: 400, headers },
+        );
+      }
+    }
+
+    await storage.update(id, paste, existing.editCodeHash);
+    headers.set('location', '/' + id);
+    return new Response('', { status: 302, headers });
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
+  }
 });
 
+// Delete paste
 app.post('/:id/delete', async (req, params) => {
   const id = params.id as string ?? '';
-  const headers = new Headers({ 'content-type': 'text/html' });
+  const headers = new Headers(HTML_HEADERS);
 
   if (id.trim().length === 0) {
     headers.set('location', '/');
@@ -361,33 +553,37 @@ app.post('/:id/delete', async (req, params) => {
     editCode = editCode.trim() || undefined;
   }
 
-  const res = await storage.get(id);
-  if (res.value === null) {
-    return new Response(errorPage(), { status: 404, headers });
-  }
-
-  const existing = res.value;
-  const hasEditCode = Boolean(existing.editCodeHash);
-
-  if (hasEditCode) {
-    if (
-      !editCode ||
-      !(await verifyEditCode(editCode, existing.editCodeHash!))
-    ) {
-      return new Response(
-        deletePage({
-          id,
-          hasEditCode,
-          errors: { editCode: 'Invalid edit code' },
-        }),
-        { status: 400, headers },
-      );
+  try {
+    const res = await storage.get(id);
+    if (res.value === null) {
+      return new Response(errorPage(), { status: 404, headers });
     }
-  }
 
-  await storage.delete(id);
-  headers.set('location', '/');
-  return new Response('', { status: 302, headers });
+    const existing = res.value;
+    const hasEditCode = Boolean(existing.editCodeHash);
+
+    if (hasEditCode) {
+      if (
+        !editCode ||
+        !(await verifyEditCode(editCode, existing.editCodeHash!))
+      ) {
+        return new Response(
+          deletePage({
+            id,
+            hasEditCode,
+            errors: { editCode: 'Invalid edit code' },
+          }),
+          { status: 400, headers },
+        );
+      }
+    }
+
+    await storage.delete(id);
+    headers.set('location', '/');
+    return new Response('', { status: 302, headers });
+  } catch {
+    return new Response('Internal Server Error', { status: 500 });
+  }
 });
 
 Deno.serve({ port: Number(SERVER_PORT) }, (req, info) => {
@@ -427,6 +623,14 @@ function createParser() {
 
       tocItems.push(newItem);
       return `<h${depth} id="${anchor}"><a href="#${anchor}">${text}</a></h${depth}>`;
+    },
+
+    code({ text, lang }: { text: string; lang?: string }) {
+      const language = lang && hljs.getLanguage(lang) ? lang : undefined;
+      const highlighted = language
+        ? hljs.highlight(text, { language }).value
+        : hljs.highlightAuto(text).value;
+      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${highlighted}</code></pre>`;
     },
   };
 
