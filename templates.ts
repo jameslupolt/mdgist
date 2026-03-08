@@ -112,16 +112,15 @@ export const homePage = ({
             maxlength="40"
           />
         </div>
-      </div>
-      <div class="form-group">
-        <select name="ttl" class="ttl-select">
-          <option value="">No expiry</option>
-          <option value="3600000">1 hour</option>
-          <option value="86400000">1 day</option>
-          <option value="604800000">1 week</option>
-          <option value="2592000000">30 days</option>
-        </select>
-      </div>
+        <div class="form-group">
+          <select name="ttl" class="ttl-select">
+            <option value="">No expiry</option>
+            <option value="3600000">1 hour</option>
+            <option value="86400000">1 day</option>
+            <option value="604800000">1 week</option>
+            <option value="2592000000">30 days</option>
+          </select>
+        </div>
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save</button>
