@@ -1,4 +1,9 @@
-import { assert, assertEquals } from 'jsr:@std/assert@^1.0.11';
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertStringIncludes,
+} from 'jsr:@std/assert@^1.0.11';
 
 const TEST_TIMEOUT_MS = 15_000;
 
@@ -23,7 +28,24 @@ async function waitForServer(baseUrl: string) {
   throw new Error(`Server did not start in time: ${String(lastError)}`);
 }
 
-Deno.test('integration: api create/read and monitoring', async () => {
+async function postForm(
+  url: string,
+  form: URLSearchParams,
+  cookie?: string,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/x-www-form-urlencoded',
+  };
+  if (cookie) headers.cookie = cookie;
+  return await fetch(url, {
+    method: 'POST',
+    headers,
+    body: form.toString(),
+    redirect: 'manual',
+  });
+}
+
+Deno.test('integration: password protection, edit flow, reserved slugs, monitoring', async () => {
   const port = 19000 + Math.floor(Math.random() * 1000);
   const baseUrl = `http://127.0.0.1:${port}`;
   const kvDir = await Deno.makeTempDir();
@@ -54,6 +76,25 @@ Deno.test('integration: api create/read and monitoring', async () => {
   try {
     await waitForServer(baseUrl);
 
+    const reserved = [
+      'guide',
+      'api',
+      'raw',
+      'edit',
+      'delete',
+      'history',
+      'save',
+    ];
+    for (const slug of reserved) {
+      const reservedCreate = await fetch(`${baseUrl}/api/save`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ paste: 'reserved', url: slug }),
+      });
+      assertEquals(reservedCreate.status, 422);
+      await reservedCreate.text();
+    }
+
     const publicCreate = await fetch(`${baseUrl}/api/save`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -63,16 +104,125 @@ Deno.test('integration: api create/read and monitoring', async () => {
     const publicBody = await publicCreate.json();
     assert(typeof publicBody.id === 'string');
     assertEquals(publicBody.url, `/${publicBody.id}`);
+    assertEquals(publicBody.hasPassword, false);
 
-    const publicRead = await fetch(`${baseUrl}/api/${publicBody.id}`);
-    assertEquals(publicRead.status, 200);
-    const publicReadBody = await publicRead.json();
-    assertEquals(publicReadBody.id, publicBody.id);
-    assertEquals(publicReadBody.hasEditCode, false);
+    const protectedCreate = await fetch(`${baseUrl}/api/save`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        url: 'pwcase',
+        paste: '# Protected\n\nSensitive.',
+        editCode: 'edit123',
+        password: 'secret123',
+      }),
+    });
+    assertEquals(protectedCreate.status, 201);
+    const protectedBody = await protectedCreate.json();
+    assertEquals(protectedBody.id, 'pwcase');
+    assertEquals(protectedBody.hasPassword, true);
 
-    const publicPage = await fetch(`${baseUrl}/${publicBody.id}`);
-    assertEquals(publicPage.status, 200);
-    await publicPage.text();
+    const protectedApiNoPass = await fetch(`${baseUrl}/api/pwcase`);
+    assertEquals(protectedApiNoPass.status, 401);
+    await protectedApiNoPass.text();
+
+    const protectedApiWithPass = await fetch(`${baseUrl}/api/pwcase`, {
+      headers: { 'x-paste-password': 'secret123' },
+    });
+    assertEquals(protectedApiWithPass.status, 200);
+    const protectedApiWithPassBody = await protectedApiWithPass.json();
+    assertEquals(protectedApiWithPassBody.hasPassword, true);
+    assertMatch(protectedApiWithPassBody.paste, /Sensitive/);
+
+    const protectedViewNoPass = await fetch(`${baseUrl}/pwcase`);
+    assertEquals(protectedViewNoPass.status, 401);
+    assertStringIncludes(await protectedViewNoPass.text(), 'Password Required');
+
+    const unlockWrong = await postForm(
+      `${baseUrl}/pwcase/unlock`,
+      new URLSearchParams({ password: 'wrong', next: '/pwcase' }),
+    );
+    assertEquals(unlockWrong.status, 401);
+    assertStringIncludes(await unlockWrong.text(), 'Invalid password');
+
+    const unlock = await postForm(
+      `${baseUrl}/pwcase/unlock`,
+      new URLSearchParams({ password: 'secret123', next: '/pwcase' }),
+    );
+    assertEquals(unlock.status, 302);
+    assertEquals(unlock.headers.get('location'), '/pwcase');
+    const cookie = unlock.headers.get('set-cookie') ?? '';
+    assertStringIncludes(cookie, 'mdgist_pw_pwcase=');
+    await unlock.text();
+
+    const protectedViewWithCookie = await fetch(`${baseUrl}/pwcase`, {
+      headers: { cookie },
+    });
+    assertEquals(protectedViewWithCookie.status, 200);
+    await protectedViewWithCookie.text();
+
+    const historyNoPass = await fetch(`${baseUrl}/pwcase/history`);
+    assertEquals(historyNoPass.status, 401);
+    await historyNoPass.text();
+
+    const historyWithPass = await fetch(`${baseUrl}/pwcase/history`, {
+      headers: { cookie },
+    });
+    assertEquals(historyWithPass.status, 200);
+    await historyWithPass.text();
+
+    const saveWrongEditCode = await postForm(
+      `${baseUrl}/pwcase/save`,
+      new URLSearchParams({ paste: 'Updated one', editcode: 'wrong' }),
+      cookie,
+    );
+    assertEquals(saveWrongEditCode.status, 400);
+    assertStringIncludes(await saveWrongEditCode.text(), 'Invalid edit code');
+
+    const saveCorrect = await postForm(
+      `${baseUrl}/pwcase/save`,
+      new URLSearchParams({ paste: 'Updated two', editcode: 'edit123' }),
+      cookie,
+    );
+    assertEquals(saveCorrect.status, 302);
+    assertEquals(saveCorrect.headers.get('location'), '/pwcase');
+    await saveCorrect.text();
+
+    const updatedApi = await fetch(`${baseUrl}/api/pwcase`, {
+      headers: { 'x-paste-password': 'secret123' },
+    });
+    assertEquals(updatedApi.status, 200);
+    const updatedApiBody = await updatedApi.json();
+    assertMatch(updatedApiBody.paste, /Updated two/);
+
+    const historyAfterEdit = await fetch(`${baseUrl}/pwcase/history`, {
+      headers: { cookie },
+    });
+    assertEquals(historyAfterEdit.status, 200);
+    const historyAfterEditBody = await historyAfterEdit.text();
+    assertStringIncludes(historyAfterEditBody, '/pwcase/history/');
+
+    const deleteWrongEditCode = await postForm(
+      `${baseUrl}/pwcase/delete`,
+      new URLSearchParams({ editcode: 'bad' }),
+      cookie,
+    );
+    assertEquals(deleteWrongEditCode.status, 400);
+    assertStringIncludes(await deleteWrongEditCode.text(), 'Invalid edit code');
+
+    const deleteCorrect = await postForm(
+      `${baseUrl}/pwcase/delete`,
+      new URLSearchParams({ editcode: 'edit123' }),
+      cookie,
+    );
+    assertEquals(deleteCorrect.status, 302);
+    assertEquals(deleteCorrect.headers.get('location'), '/');
+    await deleteCorrect.text();
+
+    const deletedApi = await fetch(`${baseUrl}/api/pwcase`, {
+      headers: { 'x-paste-password': 'secret123' },
+    });
+    assertEquals(deletedApi.status, 404);
+    await deletedApi.text();
 
     const health = await fetch(`${baseUrl}/health`);
     assertEquals(health.status, 200);

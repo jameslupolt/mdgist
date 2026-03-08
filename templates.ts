@@ -76,7 +76,7 @@ const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) 
 export const homePage = ({
   paste = '',
   url = '',
-  errors = { url: '' },
+  errors = { url: '', password: '' },
 } = {}) => layout('mdgist', `
   <main>
     ${Tabs()}
@@ -99,6 +99,20 @@ export const homePage = ({
           />
           ${_if(errors.url, `
             <small class="error" id="url-error">${escapeHtml(errors.url)}</small>
+          `)}
+        </div>
+        <div class="form-group">
+          <input
+            name="password"
+            type="password"
+            placeholder="Password (optional)"
+            minlength="3"
+            maxlength="128"
+            aria-invalid="${Boolean(errors.password)}"
+            ${_if(errors.password, 'aria-describedby="password-error"')}
+          />
+          ${_if(errors.password, `
+            <small class="error" id="password-error">${escapeHtml(errors.password)}</small>
           `)}
         </div>
         <div class="form-group">
@@ -275,3 +289,36 @@ export const historyPage = (
   </main>
 `);
 };
+
+export const passwordPage = (
+  { id = '', next = '', error = '' } = {},
+) => layout(`Locked - ${id}`, `
+  <main>
+    <div class="paste-container">
+      <h1>Password Required</h1>
+      <p>This paste is protected.</p>
+      <form method="post" action="/${escapeHtml(id)}/unlock">
+        <input type="hidden" name="next" value="${escapeHtml(next)}" />
+        <div class="form-row">
+          <div class="form-group">
+            <input
+              name="password"
+              type="password"
+              placeholder="Paste password"
+              minlength="3"
+              maxlength="128"
+              required
+              aria-invalid="${Boolean(error)}"
+              ${_if(error, 'aria-describedby="password-error"')}
+            />
+            ${_if(error, `<small class="error" id="password-error">${escapeHtml(error)}</small>`)}
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Unlock</button>
+          <a class="btn btn-secondary" href="/">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </main>
+`);

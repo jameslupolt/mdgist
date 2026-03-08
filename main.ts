@@ -4,7 +4,12 @@ import hljs from 'highlight.js';
 import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
 import { Router } from './router.ts';
-import { storage, verifyEditCode } from './storage.ts';
+import {
+  hashPassword,
+  storage,
+  verifyEditCode,
+  verifyPassword,
+} from './storage.ts';
 import {
   deletePage,
   editPage,
@@ -12,6 +17,7 @@ import {
   guidePage,
   historyPage,
   homePage,
+  passwordPage,
   pastePage,
 } from './templates.ts';
 import './cron.ts';
@@ -25,6 +31,8 @@ interface TocItem {
 
 const MAX_PASTE_SIZE = 40_000;
 const MAX_CUSTOM_URL_LENGTH = 40;
+const MIN_PASSWORD_LENGTH = 3;
+const MAX_PASSWORD_LENGTH = 128;
 const RATE_LIMIT = 1000;
 const RATE_WINDOW = 60_000;
 const ALLOWED_TTL_VALUES = new Set([
@@ -150,6 +158,100 @@ function logError(context: string, error: unknown) {
   console.error(`[${context}]`, error);
 }
 
+function normalizePassword(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const password = raw.trim();
+  return password.length > 0 ? password : undefined;
+}
+
+function passwordCookieName(id: string): string {
+  return `mdgist_pw_${id}`;
+}
+
+function getCookie(req: Request, name: string): string | undefined {
+  const cookieHeader = req.headers.get('cookie');
+  if (!cookieHeader) return undefined;
+
+  const pairs = cookieHeader.split(';');
+  for (const pair of pairs) {
+    const [key, ...rest] = pair.trim().split('=');
+    if (key === name) return decodeURIComponent(rest.join('='));
+  }
+
+  return undefined;
+}
+
+function buildPasswordCookie(
+  req: Request,
+  id: string,
+  password: string,
+): string {
+  const secure = new URL(req.url).protocol === 'https:' ? '; Secure' : '';
+  return `${passwordCookieName(id)}=${encodeURIComponent(password)}; Path=/${
+    encodeURIComponent(id)
+  }; HttpOnly; SameSite=Lax; Max-Age=2592000${secure}`;
+}
+
+function resolvePassword(req: Request, id: string): string | undefined {
+  const url = new URL(req.url);
+  return normalizePassword(url.searchParams.get('password')) ??
+    normalizePassword(req.headers.get('x-paste-password')) ??
+    normalizePassword(getCookie(req, passwordCookieName(id)));
+}
+
+function sanitizeNextPath(id: string, next?: string): string {
+  if (!next) return `/${id}`;
+  if (next === `/${id}` || next.startsWith(`/${id}/`)) return next;
+  return `/${id}`;
+}
+
+function passwordBootstrapRedirect(
+  req: Request,
+  id: string,
+  password?: string,
+): Response | undefined {
+  if (!password) return undefined;
+
+  const url = new URL(req.url);
+  const queryPassword = normalizePassword(url.searchParams.get('password'));
+  if (!queryPassword || queryPassword !== password) return undefined;
+
+  url.searchParams.delete('password');
+  const location = url.pathname +
+    (url.searchParams.size ? `?${url.searchParams.toString()}` : '');
+  const headers = new Headers(HTML_HEADERS);
+  headers.set('location', location);
+  headers.set('set-cookie', buildPasswordCookie(req, id, password));
+  return new Response('', { status: 302, headers });
+}
+
+async function hasPastePasswordAccess(
+  req: Request,
+  id: string,
+  passwordHash?: string,
+): Promise<{ ok: boolean; password?: string; bootstrap?: Response }> {
+  if (!passwordHash) return { ok: true };
+
+  const password = resolvePassword(req, id);
+  if (!password) return { ok: false };
+
+  const valid = await verifyPassword(password, passwordHash);
+  if (!valid) return { ok: false };
+
+  return {
+    ok: true,
+    password,
+    bootstrap: passwordBootstrapRedirect(req, id, password),
+  };
+}
+
+function lockedPage(id: string, next: string) {
+  return new Response(passwordPage({ id, next }), {
+    status: 401,
+    headers: HTML_HEADERS,
+  });
+}
+
 const app = new Router(SECURITY_HEADERS);
 
 // Static files
@@ -209,13 +311,21 @@ app.get('/guide', async () => {
 });
 
 // View paste
-app.get('/:id', async (_req, params) => {
+app.get('/:id', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      const access = await hasPastePasswordAccess(
+        req,
+        id,
+        res.value.passwordHash,
+      );
+      if (!access.ok) return lockedPage(id, `/${id}`);
+      if (access.bootstrap) return access.bootstrap;
+
       const parse = createParser();
       const { paste } = res.value;
       let { html, title } = parse(paste);
@@ -239,13 +349,21 @@ app.get('/:id', async (_req, params) => {
 });
 
 // Edit paste
-app.get('/:id/edit', async (_req, params) => {
+app.get('/:id/edit', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      const access = await hasPastePasswordAccess(
+        req,
+        id,
+        res.value.passwordHash,
+      );
+      if (!access.ok) return lockedPage(id, `/${id}/edit`);
+      if (access.bootstrap) return access.bootstrap;
+
       const { editCodeHash, paste } = res.value;
       const hasEditCode = Boolean(editCodeHash);
       return new Response(editPage({ id, paste, hasEditCode }), {
@@ -265,13 +383,21 @@ app.get('/:id/edit', async (_req, params) => {
 });
 
 // Delete paste page
-app.get('/:id/delete', async (_req, params) => {
+app.get('/:id/delete', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      const access = await hasPastePasswordAccess(
+        req,
+        id,
+        res.value.passwordHash,
+      );
+      if (!access.ok) return lockedPage(id, `/${id}/delete`);
+      if (access.bootstrap) return access.bootstrap;
+
       const { editCodeHash } = res.value;
       const hasEditCode = Boolean(editCodeHash);
       return new Response(deletePage({ id, hasEditCode }), {
@@ -291,13 +417,23 @@ app.get('/:id/delete', async (_req, params) => {
 });
 
 // Raw paste
-app.get('/:id/raw', async (_req, params) => {
+app.get('/:id/raw', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      const access = await hasPastePasswordAccess(
+        req,
+        id,
+        res.value.passwordHash,
+      );
+      if (!access.ok) {
+        return new Response('Password required', { status: 401 });
+      }
+      if (access.bootstrap) return access.bootstrap;
+
       return new Response(res.value.paste, {
         status: 200,
         headers: { 'content-type': 'text/plain; charset=utf-8' },
@@ -315,7 +451,7 @@ app.get('/:id/raw', async (_req, params) => {
 });
 
 // Edit history list
-app.get('/:id/history', async (_req, params) => {
+app.get('/:id/history', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
@@ -323,6 +459,14 @@ app.get('/:id/history', async (_req, params) => {
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
     }
+
+    const access = await hasPastePasswordAccess(
+      req,
+      id,
+      res.value.passwordHash,
+    );
+    if (!access.ok) return lockedPage(id, `/${id}/history`);
+    if (access.bootstrap) return access.bootstrap;
 
     const versions = await storage.getHistory(id);
     return new Response(historyPage({ id, versions }), {
@@ -336,7 +480,7 @@ app.get('/:id/history', async (_req, params) => {
 });
 
 // View specific history version
-app.get('/:id/history/:timestamp', async (_req, params) => {
+app.get('/:id/history/:timestamp', async (req, params) => {
   const id = params.id as string ?? '';
   const timestamp = Number(params.timestamp);
 
@@ -345,6 +489,19 @@ app.get('/:id/history/:timestamp', async (_req, params) => {
   }
 
   try {
+    const latest = await storage.get(id);
+    if (latest.value === null) {
+      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+    }
+
+    const access = await hasPastePasswordAccess(
+      req,
+      id,
+      latest.value.passwordHash,
+    );
+    if (!access.ok) return lockedPage(id, `/${id}/history/${timestamp}`);
+    if (access.bootstrap) return access.bootstrap;
+
     const res = await storage.getVersion(id, timestamp);
 
     if (res.value !== null) {
@@ -378,18 +535,31 @@ app.get('/:id/history/:timestamp', async (_req, params) => {
 });
 
 // API: Get paste
-app.get('/api/:id', async (_req, params) => {
+app.get('/api/:id', async (req, params) => {
   const id = params.id as string ?? '';
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
+      const access = await hasPastePasswordAccess(
+        req,
+        id,
+        res.value.passwordHash,
+      );
+      if (!access.ok) {
+        return new Response(JSON.stringify({ error: 'Password required' }), {
+          status: 401,
+          headers: JSON_HEADERS,
+        });
+      }
+
       return new Response(
         JSON.stringify({
           id,
           paste: res.value.paste,
           hasEditCode: Boolean(res.value.editCodeHash),
+          hasPassword: Boolean(res.value.passwordHash),
         }),
         { status: 200, headers: JSON_HEADERS },
       );
@@ -422,12 +592,13 @@ app.post('/save', async (req) => {
 
   const customUrl = (form.get('url') as string) ?? '';
   const paste = (form.get('paste') as string) ?? '';
+  const password = normalizePassword(form.get('password'));
   if (paste.length === 0) {
     return new Response(
       homePage({
         paste,
         url: customUrl,
-        errors: { url: 'Paste content required' },
+        errors: { url: 'Paste content required', password: '' },
       }),
       { status: 422, headers },
     );
@@ -440,6 +611,7 @@ app.post('/save', async (req) => {
         url: customUrl,
         errors: {
           url: `Custom URL cannot exceed ${MAX_CUSTOM_URL_LENGTH} characters`,
+          password: '',
         },
       }),
       { status: 422, headers },
@@ -454,7 +626,7 @@ app.post('/save', async (req) => {
       homePage({
         paste,
         url: customUrl,
-        errors: { url: 'Invalid expiry value' },
+        errors: { url: 'Invalid expiry value', password: '' },
       }),
       { status: 422, headers },
     );
@@ -467,6 +639,26 @@ app.post('/save', async (req) => {
         url: customUrl,
         errors: {
           url: `Paste exceeds maximum length of ${MAX_PASTE_SIZE} characters`,
+          password: '',
+        },
+      }),
+      { status: 422, headers },
+    );
+  }
+
+  if (
+    password !== undefined &&
+    (password.length < MIN_PASSWORD_LENGTH ||
+      password.length > MAX_PASSWORD_LENGTH)
+  ) {
+    return new Response(
+      homePage({
+        paste,
+        url: customUrl,
+        errors: {
+          url: '',
+          password:
+            `Password must be ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} characters`,
         },
       }),
       { status: 422, headers },
@@ -487,13 +679,13 @@ app.post('/save', async (req) => {
           homePage({
             paste,
             url: customUrl,
-            errors: { url: `URL unavailable: ${customUrl}` },
+            errors: { url: `URL unavailable: ${customUrl}`, password: '' },
           }),
           { status: 422, headers },
         );
       }
 
-      await storage.set(slug, paste, editCode, ttl);
+      await storage.set(slug, paste, editCode, ttl, password);
       headers.set('location', '/' + slug.trim());
       return new Response('', { status: 302, headers });
     }
@@ -506,7 +698,7 @@ app.post('/save', async (req) => {
       exists = await storage.get(id).then((r) => r.value !== null);
     }
 
-    await storage.set(id, paste, editCode, ttl);
+    await storage.set(id, paste, editCode, ttl, password);
     headers.set('location', '/' + id.trim());
     return new Response('', { status: 302, headers });
   } catch (error) {
@@ -522,6 +714,7 @@ app.post('/api/save', async (req) => {
     const paste = (body.paste as string) ?? '';
     const customUrl = (body.url as string) ?? '';
     const editCode = (body.editCode as string) ?? undefined;
+    const password = normalizePassword(body.password);
     const ttl = parseTtl(body.ttl);
 
     if (customUrl.length > MAX_CUSTOM_URL_LENGTH) {
@@ -561,6 +754,23 @@ app.post('/api/save', async (req) => {
       );
     }
 
+    if (
+      password !== undefined &&
+      (password.length < MIN_PASSWORD_LENGTH ||
+        password.length > MAX_PASSWORD_LENGTH)
+    ) {
+      return new Response(
+        JSON.stringify({
+          error:
+            `Password must be ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} characters`,
+        }),
+        {
+          status: 422,
+          headers: JSON_HEADERS,
+        },
+      );
+    }
+
     if (slug.length > 0) {
       const res = await storage.get(slug);
       if (RESERVED_SLUGS.has(slug) || res.value !== null) {
@@ -573,11 +783,12 @@ app.post('/api/save', async (req) => {
         );
       }
 
-      await storage.set(slug, paste, editCode, ttl);
+      await storage.set(slug, paste, editCode, ttl, password);
       return new Response(
         JSON.stringify({
           id: slug,
           url: '/' + slug,
+          hasPassword: Boolean(password),
         }),
         {
           status: 201,
@@ -593,11 +804,12 @@ app.post('/api/save', async (req) => {
       exists = await storage.get(id).then((r) => r.value !== null);
     }
 
-    await storage.set(id, paste, editCode, ttl);
+    await storage.set(id, paste, editCode, ttl, password);
     return new Response(
       JSON.stringify({
         id,
         url: '/' + id,
+        hasPassword: Boolean(password),
       }),
       {
         status: 201,
@@ -610,6 +822,62 @@ app.post('/api/save', async (req) => {
       status: 400,
       headers: JSON_HEADERS,
     });
+  }
+});
+
+app.post('/:id/unlock', async (req, params) => {
+  const id = params.id as string ?? '';
+  const headers = new Headers(HTML_HEADERS);
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (error) {
+    logError('POST /:id/unlock (formData)', error);
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const password = normalizePassword(form.get('password'));
+  const next = sanitizeNextPath(id, (form.get('next') as string) ?? undefined);
+
+  if (!password) {
+    return new Response(
+      passwordPage({ id, next, error: 'Password required' }),
+      {
+        status: 401,
+        headers: HTML_HEADERS,
+      },
+    );
+  }
+
+  try {
+    const res = await storage.get(id);
+    if (res.value === null) {
+      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
+    }
+
+    if (!res.value.passwordHash) {
+      headers.set('location', next);
+      return new Response('', { status: 302, headers });
+    }
+
+    const valid = await verifyPassword(password, res.value.passwordHash);
+    if (!valid) {
+      return new Response(
+        passwordPage({ id, next, error: 'Invalid password' }),
+        {
+          status: 401,
+          headers: HTML_HEADERS,
+        },
+      );
+    }
+
+    headers.set('set-cookie', buildPasswordCookie(req, id, password));
+    headers.set('location', next);
+    return new Response('', { status: 302, headers });
+  } catch (error) {
+    logError('POST /:id/unlock', error);
+    return new Response('Internal Server Error', { status: 500 });
   }
 });
 
@@ -647,6 +915,14 @@ app.post('/:id/save', async (req, params) => {
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers });
     }
+
+    const access = await hasPastePasswordAccess(
+      req,
+      id,
+      res.value.passwordHash,
+    );
+    if (!access.ok) return lockedPage(id, `/${id}/edit`);
+    if (access.bootstrap) return access.bootstrap;
 
     const existing = res.value;
     const hasEditCode = Boolean(existing.editCodeHash);
@@ -705,6 +981,14 @@ app.post('/:id/delete', async (req, params) => {
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers });
     }
+
+    const access = await hasPastePasswordAccess(
+      req,
+      id,
+      res.value.passwordHash,
+    );
+    if (!access.ok) return lockedPage(id, `/${id}/delete`);
+    if (access.bootstrap) return access.bootstrap;
 
     const existing = res.value;
     const hasEditCode = Boolean(existing.editCodeHash);
