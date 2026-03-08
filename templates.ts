@@ -67,9 +67,7 @@ const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) 
 
     ${content}
 
-    <footer>
-      <a href="https://github.com/kevinfiol/mdbin">Source</a>
-    </footer>
+    <footer></footer>
     <script src="/theme-switch.js"></script>
   </body>
   </html>
