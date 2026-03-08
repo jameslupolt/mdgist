@@ -4,12 +4,7 @@ import hljs from 'highlight.js';
 import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
 import { Router } from './router.ts';
-import {
-  hashViewToken,
-  storage,
-  verifyEditCode,
-  verifyViewToken,
-} from './storage.ts';
+import { storage, verifyEditCode } from './storage.ts';
 import {
   deletePage,
   editPage,
@@ -150,42 +145,9 @@ function parseTtl(raw: unknown): number | undefined | null {
   return ttl;
 }
 
-function parsePrivateFlag(raw: unknown): boolean {
-  if (typeof raw === 'boolean') return raw;
-  if (typeof raw === 'string') {
-    const value = raw.trim().toLowerCase();
-    return value === '1' || value === 'true' || value === 'on' ||
-      value === 'yes';
-  }
-  return false;
-}
-
 function logError(context: string, error: unknown) {
   metrics.errors += 1;
   console.error(`[${context}]`, error);
-}
-
-function createViewToken() {
-  const chars =
-    '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
-}
-
-function appendViewToken(path: string, viewToken?: string) {
-  if (!viewToken) return path;
-  const url = new URL(path, 'http://localhost');
-  url.searchParams.set('view', viewToken);
-  return url.pathname + url.search;
-}
-
-async function hasPasteAccess(
-  paste: { isPrivate?: boolean; viewTokenHash?: string },
-  viewToken?: string,
-) {
-  if (!paste.isPrivate) return true;
-  if (!viewToken || !paste.viewTokenHash) return false;
-  return await verifyViewToken(viewToken, paste.viewTokenHash);
 }
 
 const app = new Router(SECURITY_HEADERS);
@@ -249,8 +211,6 @@ app.get('/guide', async () => {
 // View paste
 app.get('/:id', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
@@ -258,18 +218,11 @@ app.get('/:id', async (_req, params) => {
     if (res.value !== null) {
       const parse = createParser();
       const { paste } = res.value;
-      const canAccess = await hasPasteAccess(res.value, viewToken);
-      if (!canAccess) {
-        return new Response(errorPage(), {
-          status: 404,
-          headers: HTML_HEADERS,
-        });
-      }
       let { html, title } = parse(paste);
       html = xss(html, XSS_OPTIONS);
       if (!title) title = id;
 
-      return new Response(pastePage({ id, html, title, viewToken }), {
+      return new Response(pastePage({ id, html, title }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -288,23 +241,14 @@ app.get('/:id', async (_req, params) => {
 // Edit paste
 app.get('/:id/edit', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      const canAccess = await hasPasteAccess(res.value, viewToken);
-      if (!canAccess) {
-        return new Response(errorPage(), {
-          status: 404,
-          headers: HTML_HEADERS,
-        });
-      }
       const { editCodeHash, paste } = res.value;
       const hasEditCode = Boolean(editCodeHash);
-      return new Response(editPage({ id, paste, hasEditCode, viewToken }), {
+      return new Response(editPage({ id, paste, hasEditCode }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -323,23 +267,14 @@ app.get('/:id/edit', async (_req, params) => {
 // Delete paste page
 app.get('/:id/delete', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      const canAccess = await hasPasteAccess(res.value, viewToken);
-      if (!canAccess) {
-        return new Response(errorPage(), {
-          status: 404,
-          headers: HTML_HEADERS,
-        });
-      }
       const { editCodeHash } = res.value;
       const hasEditCode = Boolean(editCodeHash);
-      return new Response(deletePage({ id, hasEditCode, viewToken }), {
+      return new Response(deletePage({ id, hasEditCode }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -358,20 +293,11 @@ app.get('/:id/delete', async (_req, params) => {
 // Raw paste
 app.get('/:id/raw', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      const canAccess = await hasPasteAccess(res.value, viewToken);
-      if (!canAccess) {
-        return new Response(errorPage(), {
-          status: 404,
-          headers: HTML_HEADERS,
-        });
-      }
       return new Response(res.value.paste, {
         status: 200,
         headers: { 'content-type': 'text/plain; charset=utf-8' },
@@ -391,8 +317,6 @@ app.get('/:id/raw', async (_req, params) => {
 // Edit history list
 app.get('/:id/history', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
@@ -400,13 +324,8 @@ app.get('/:id/history', async (_req, params) => {
       return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
     }
 
-    const canAccess = await hasPasteAccess(res.value, viewToken);
-    if (!canAccess) {
-      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
-    }
-
     const versions = await storage.getHistory(id);
-    return new Response(historyPage({ id, versions, viewToken }), {
+    return new Response(historyPage({ id, versions }), {
       status: 200,
       headers: HTML_HEADERS,
     });
@@ -420,24 +339,12 @@ app.get('/:id/history', async (_req, params) => {
 app.get('/:id/history/:timestamp', async (_req, params) => {
   const id = params.id as string ?? '';
   const timestamp = Number(params.timestamp);
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   if (isNaN(timestamp)) {
     return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
   }
 
   try {
-    const latest = await storage.get(id);
-    if (latest.value === null) {
-      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
-    }
-
-    const canAccess = await hasPasteAccess(latest.value, viewToken);
-    if (!canAccess) {
-      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
-    }
-
     const res = await storage.getVersion(id, timestamp);
 
     if (res.value !== null) {
@@ -454,7 +361,7 @@ app.get('/:id/history/:timestamp', async (_req, params) => {
         })`;
       }
 
-      return new Response(pastePage({ id, html, title, viewToken }), {
+      return new Response(pastePage({ id, html, title }), {
         status: 200,
         headers: HTML_HEADERS,
       });
@@ -473,27 +380,16 @@ app.get('/:id/history/:timestamp', async (_req, params) => {
 // API: Get paste
 app.get('/api/:id', async (_req, params) => {
   const id = params.id as string ?? '';
-  const reqUrl = new URL(_req.url);
-  const viewToken = reqUrl.searchParams.get('view') ?? undefined;
 
   try {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      const canAccess = await hasPasteAccess(res.value, viewToken);
-      if (!canAccess) {
-        return new Response(JSON.stringify({ error: 'Not found' }), {
-          status: 404,
-          headers: JSON_HEADERS,
-        });
-      }
-
       return new Response(
         JSON.stringify({
           id,
           paste: res.value.paste,
           hasEditCode: Boolean(res.value.editCodeHash),
-          isPrivate: Boolean(res.value.isPrivate),
         }),
         { status: 200, headers: JSON_HEADERS },
       );
@@ -526,8 +422,6 @@ app.post('/save', async (req) => {
 
   const customUrl = (form.get('url') as string) ?? '';
   const paste = (form.get('paste') as string) ?? '';
-  const viewToken = (form.get('view') as string) ?? undefined;
-  const isPrivate = parsePrivateFlag(form.get('private'));
   if (paste.length === 0) {
     return new Response(
       homePage({
@@ -585,11 +479,6 @@ app.post('/save', async (req) => {
   }
 
   try {
-    const viewToken = isPrivate ? createViewToken() : undefined;
-    const viewTokenHash = viewToken
-      ? await hashViewToken(viewToken)
-      : undefined;
-
     if (slug.length > 0) {
       const res = await storage.get(slug);
 
@@ -604,15 +493,8 @@ app.post('/save', async (req) => {
         );
       }
 
-      await storage.set(
-        slug,
-        paste,
-        editCode,
-        ttl,
-        isPrivate,
-        viewTokenHash,
-      );
-      headers.set('location', appendViewToken('/' + slug.trim(), viewToken));
+      await storage.set(slug, paste, editCode, ttl);
+      headers.set('location', '/' + slug.trim());
       return new Response('', { status: 302, headers });
     }
 
@@ -624,8 +506,8 @@ app.post('/save', async (req) => {
       exists = await storage.get(id).then((r) => r.value !== null);
     }
 
-    await storage.set(id, paste, editCode, ttl, isPrivate, viewTokenHash);
-    headers.set('location', appendViewToken('/' + id.trim(), viewToken));
+    await storage.set(id, paste, editCode, ttl);
+    headers.set('location', '/' + id.trim());
     return new Response('', { status: 302, headers });
   } catch (error) {
     logError('POST /save', error);
@@ -640,7 +522,6 @@ app.post('/api/save', async (req) => {
     const paste = (body.paste as string) ?? '';
     const customUrl = (body.url as string) ?? '';
     const editCode = (body.editCode as string) ?? undefined;
-    const isPrivate = parsePrivateFlag(body.private);
     const ttl = parseTtl(body.ttl);
 
     if (customUrl.length > MAX_CUSTOM_URL_LENGTH) {
@@ -663,11 +544,6 @@ app.post('/api/save', async (req) => {
     }
 
     const slug = createSlug(customUrl);
-    const viewToken = isPrivate ? createViewToken() : undefined;
-    const viewTokenHash = viewToken
-      ? await hashViewToken(viewToken)
-      : undefined;
-
     if (paste.length === 0) {
       return new Response(JSON.stringify({ error: 'Paste content required' }), {
         status: 400,
@@ -697,20 +573,11 @@ app.post('/api/save', async (req) => {
         );
       }
 
-      await storage.set(
-        slug,
-        paste,
-        editCode,
-        ttl,
-        isPrivate,
-        viewTokenHash,
-      );
+      await storage.set(slug, paste, editCode, ttl);
       return new Response(
         JSON.stringify({
           id: slug,
-          url: appendViewToken('/' + slug, viewToken),
-          isPrivate,
-          viewToken,
+          url: '/' + slug,
         }),
         {
           status: 201,
@@ -726,13 +593,11 @@ app.post('/api/save', async (req) => {
       exists = await storage.get(id).then((r) => r.value !== null);
     }
 
-    await storage.set(id, paste, editCode, ttl, isPrivate, viewTokenHash);
+    await storage.set(id, paste, editCode, ttl);
     return new Response(
       JSON.stringify({
         id,
-        url: appendViewToken('/' + id, viewToken),
-        isPrivate,
-        viewToken,
+        url: '/' + id,
       }),
       {
         status: 201,
@@ -767,7 +632,6 @@ app.post('/:id/save', async (req, params) => {
   }
 
   const paste = (form.get('paste') as string) ?? '';
-  const viewToken = (form.get('view') as string) ?? undefined;
 
   if (paste.length > MAX_PASTE_SIZE) {
     return new Response('Paste too large', { status: 422, headers });
@@ -784,11 +648,6 @@ app.post('/:id/save', async (req, params) => {
       return new Response(errorPage(), { status: 404, headers });
     }
 
-    const canAccess = await hasPasteAccess(res.value, viewToken);
-    if (!canAccess) {
-      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
-    }
-
     const existing = res.value;
     const hasEditCode = Boolean(existing.editCodeHash);
 
@@ -802,7 +661,6 @@ app.post('/:id/save', async (req, params) => {
             id,
             paste,
             hasEditCode,
-            viewToken,
             errors: { editCode: 'Invalid edit code' },
           }),
           { status: 400, headers },
@@ -811,7 +669,7 @@ app.post('/:id/save', async (req, params) => {
     }
 
     await storage.update(id, paste, existing.editCodeHash);
-    headers.set('location', appendViewToken('/' + id, viewToken));
+    headers.set('location', '/' + id);
     return new Response('', { status: 302, headers });
   } catch (error) {
     logError('POST /:id/save', error);
@@ -838,7 +696,6 @@ app.post('/:id/delete', async (req, params) => {
   }
 
   let editCode: string | undefined = form.get('editcode') as string;
-  const viewToken = (form.get('view') as string) ?? undefined;
   if (typeof editCode === 'string') {
     editCode = editCode.trim() || undefined;
   }
@@ -847,11 +704,6 @@ app.post('/:id/delete', async (req, params) => {
     const res = await storage.get(id);
     if (res.value === null) {
       return new Response(errorPage(), { status: 404, headers });
-    }
-
-    const canAccess = await hasPasteAccess(res.value, viewToken);
-    if (!canAccess) {
-      return new Response(errorPage(), { status: 404, headers: HTML_HEADERS });
     }
 
     const existing = res.value;
@@ -866,7 +718,6 @@ app.post('/:id/delete', async (req, params) => {
           deletePage({
             id,
             hasEditCode,
-            viewToken,
             errors: { editCode: 'Invalid edit code' },
           }),
           { status: 400, headers },

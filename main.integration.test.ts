@@ -1,9 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertStringIncludes,
-} from 'jsr:@std/assert@^1.0.11';
+import { assert, assertEquals } from 'jsr:@std/assert@^1.0.11';
 
 const TEST_TIMEOUT_MS = 15_000;
 
@@ -28,7 +23,7 @@ async function waitForServer(baseUrl: string) {
   throw new Error(`Server did not start in time: ${String(lastError)}`);
 }
 
-Deno.test('integration: api, private paste access, and monitoring', async () => {
+Deno.test('integration: api create/read and monitoring', async () => {
   const port = 19000 + Math.floor(Math.random() * 1000);
   const baseUrl = `http://127.0.0.1:${port}`;
   const kvDir = await Deno.makeTempDir();
@@ -67,49 +62,17 @@ Deno.test('integration: api, private paste access, and monitoring', async () => 
     assertEquals(publicCreate.status, 201);
     const publicBody = await publicCreate.json();
     assert(typeof publicBody.id === 'string');
-    assertEquals(publicBody.isPrivate, false);
+    assertEquals(publicBody.url, `/${publicBody.id}`);
 
-    const privateCreate = await fetch(`${baseUrl}/api/save`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        paste: '# Private Paste\n\nTop secret.',
-        private: true,
-      }),
-    });
-    assertEquals(privateCreate.status, 201);
-    const privateBody = await privateCreate.json();
-    assert(typeof privateBody.id === 'string');
-    assertEquals(privateBody.isPrivate, true);
-    assert(typeof privateBody.viewToken === 'string');
-    assert(privateBody.viewToken.length > 0);
-    assertStringIncludes(privateBody.url, '?view=');
+    const publicRead = await fetch(`${baseUrl}/api/${publicBody.id}`);
+    assertEquals(publicRead.status, 200);
+    const publicReadBody = await publicRead.json();
+    assertEquals(publicReadBody.id, publicBody.id);
+    assertEquals(publicReadBody.hasEditCode, false);
 
-    const privateApiNoToken = await fetch(`${baseUrl}/api/${privateBody.id}`);
-    assertEquals(privateApiNoToken.status, 404);
-    await privateApiNoToken.text();
-
-    const privateApiWithToken = await fetch(
-      `${baseUrl}/api/${privateBody.id}?view=${
-        encodeURIComponent(privateBody.viewToken)
-      }`,
-    );
-    assertEquals(privateApiWithToken.status, 200);
-    const privateGetBody = await privateApiWithToken.json();
-    assertEquals(privateGetBody.isPrivate, true);
-    assertMatch(privateGetBody.paste, /Top secret/);
-
-    const privatePageNoToken = await fetch(`${baseUrl}/${privateBody.id}`);
-    assertEquals(privatePageNoToken.status, 404);
-    await privatePageNoToken.text();
-
-    const privatePageWithToken = await fetch(
-      `${baseUrl}/${privateBody.id}?view=${
-        encodeURIComponent(privateBody.viewToken)
-      }`,
-    );
-    assertEquals(privatePageWithToken.status, 200);
-    await privatePageWithToken.text();
+    const publicPage = await fetch(`${baseUrl}/${publicBody.id}`);
+    assertEquals(publicPage.status, 200);
+    await publicPage.text();
 
     const health = await fetch(`${baseUrl}/health`);
     assertEquals(health.status, 200);
