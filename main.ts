@@ -346,7 +346,7 @@ app.get('/:id', async (req, params) => {
       html = xss(html, XSS_OPTIONS);
       if (!title) title = id;
 
-      return new Response(pastePage({ id, html, title, hasEditCode: Boolean(res.value.editCodeHash) }), {
+      return new Response(pastePage({ id, html, title, hasEditCode: Boolean(res.value.editCodeHash), history: Boolean(res.value.history) }), {
         status: 200,
         headers: HTML_HEADERS,
       });

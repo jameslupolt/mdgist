@@ -269,12 +269,14 @@ main {
 /* Forms */
 .form-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 0.75rem;
 }
 
 .form-group {
   flex: 1;
+  min-width: 10rem;
 }
 
 input[type="text"],
