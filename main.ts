@@ -23,7 +23,7 @@ interface TocItem {
 }
 
 const MAX_PASTE_SIZE = 40_000;
-const RATE_LIMIT = 30;
+const RATE_LIMIT = 1000;
 const RATE_WINDOW = 60_000;
 
 const STATIC_ROOT = resolve('./static');
@@ -391,13 +391,18 @@ app.post('/:id/delete', async (req, params) => {
 });
 
 Deno.serve({ port: Number(SERVER_PORT) }, (req, info) => {
-  const ip = info.remoteAddr.hostname;
+  const url = new URL(req.url);
 
-  if (!checkRateLimit(ip)) {
-    return new Response('Too Many Requests', {
-      status: 429,
-      headers: { 'Retry-After': '60' },
-    });
+  // Skip rate limiting for static files
+  if (!FILES.has(url.pathname)) {
+    const ip = info.remoteAddr.hostname;
+
+    if (!checkRateLimit(ip)) {
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: { 'Retry-After': '60' },
+      });
+    }
   }
 
   if (req.method === 'POST' && !checkCsrf(req)) {
