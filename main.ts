@@ -1,10 +1,10 @@
 import xss from 'xss';
 import { Marked } from 'marked';
-import { resolve } from 'std/path/mod.ts';
-import { walk } from 'std/fs/mod.ts';
+import { resolve } from '@std/path';
+import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
 import { Router } from './router.ts';
-import { Paste, storage } from './storage.ts';
+import { storage, verifyEditCode } from './storage.ts';
 import {
   deletePage,
   editPage,
@@ -22,6 +22,10 @@ interface TocItem {
   subitems: TocItem[];
 }
 
+const MAX_PASTE_SIZE = 40_000;
+const RATE_LIMIT = 30;
+const RATE_WINDOW = 60_000;
+
 const STATIC_ROOT = resolve('./static');
 const FILES = new Map<string, string>();
 const MIMES: Record<string, string> = {
@@ -33,7 +37,6 @@ const MIMES: Record<string, string> = {
 const XSS_OPTIONS = {
   whiteList: {
     ...xss.whiteList,
-    // allow heading elements to have `id=` attributes
     h1: ['id'],
     h2: ['id'],
     h3: ['id'],
@@ -41,6 +44,7 @@ const XSS_OPTIONS = {
     h5: ['id'],
     h6: ['id'],
     input: ['disabled', 'type', 'checked'],
+    div: ['class'],
   },
 };
 
@@ -50,8 +54,58 @@ for await (const file of walk(STATIC_ROOT)) {
   }
 }
 
-const generateId = uid();
-const app = new Router();
+// Rate limiting
+const rateLimitMap = new Map<string, number[]>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  let timestamps = rateLimitMap.get(ip);
+
+  if (!timestamps) {
+    timestamps = [];
+    rateLimitMap.set(ip, timestamps);
+  }
+
+  while (timestamps.length > 0 && now - timestamps[0] > RATE_WINDOW) {
+    timestamps.shift();
+  }
+
+  if (timestamps.length >= RATE_LIMIT) return false;
+  timestamps.push(now);
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of rateLimitMap) {
+    const recent = timestamps.filter((t) => now - t < RATE_WINDOW);
+    if (recent.length === 0) rateLimitMap.delete(ip);
+    else rateLimitMap.set(ip, recent);
+  }
+}, RATE_WINDOW);
+
+// CSRF check for POST requests
+function checkCsrf(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  const host = req.headers.get('host');
+  if (!origin || !host) return true;
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Content-Security-Policy':
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+};
+
+const app = new Router(SECURITY_HEADERS);
 
 app.get('*', async (req) => {
   const url = new URL(req.url);
@@ -64,9 +118,7 @@ app.get('*', async (req) => {
     const readableStream = file.readable;
     return new Response(readableStream, {
       status: 200,
-      headers: {
-        'content-type': contentType,
-      },
+      headers: { 'content-type': contentType },
     });
   }
 });
@@ -90,118 +142,109 @@ app.get('/guide', async () => {
 });
 
 app.get('/:id', async (_req, params) => {
-  let contents = '';
-  let status = 200;
   const id = params.id as string ?? '';
   const res = await storage.get(id);
 
   if (res.value !== null) {
     const parse = createParser();
     const { paste } = res.value;
-
     let { html, title } = parse(paste);
     html = xss(html, XSS_OPTIONS);
     if (!title) title = id;
 
-    contents = pastePage({ id, html, title });
-    status = 200;
-  } else {
-    contents = errorPage();
-    status = 404;
+    return new Response(pastePage({ id, html, title }), {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
   }
 
-  return new Response(contents, {
-    status,
-    headers: {
-      'content-type': 'text/html',
-    },
+  return new Response(errorPage(), {
+    status: 404,
+    headers: { 'content-type': 'text/html' },
   });
 });
 
 app.get('/:id/edit', async (_req, params) => {
-  let contents = '';
-  let status = 200;
   const id = params.id as string ?? '';
   const res = await storage.get(id);
 
   if (res.value !== null) {
-    const { editCode, paste } = res.value;
-    const hasEditCode = Boolean(editCode);
-    contents = editPage({ id, paste, hasEditCode });
-    status = 200;
-  } else {
-    contents = errorPage();
-    status = 404;
+    const { editCodeHash, paste } = res.value;
+    const hasEditCode = Boolean(editCodeHash);
+    return new Response(editPage({ id, paste, hasEditCode }), {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
   }
 
-  return new Response(contents, {
-    status,
-    headers: {
-      'content-type': 'text/html',
-    },
+  return new Response(errorPage(), {
+    status: 404,
+    headers: { 'content-type': 'text/html' },
   });
 });
 
 app.get('/:id/delete', async (_req, params) => {
-  let contents = '';
-  let status = 200;
-
   const id = params.id as string ?? '';
   const res = await storage.get(id);
 
   if (res.value !== null) {
-    const { editCode } = res.value;
-    const hasEditCode = Boolean(editCode);
-    contents = deletePage({ id, hasEditCode });
-  } else {
-    contents = errorPage();
-    status = 404;
+    const { editCodeHash } = res.value;
+    const hasEditCode = Boolean(editCodeHash);
+    return new Response(deletePage({ id, hasEditCode }), {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
   }
 
-  return new Response(contents, {
-    status,
-    headers: {
-      'content-type': 'text/html',
-    },
+  return new Response(errorPage(), {
+    status: 404,
+    headers: { 'content-type': 'text/html' },
   });
 });
 
 app.get('/:id/raw', async (_req, params) => {
-  let contents = '';
-  let status = 200;
-  let contentType = 'text/plain';
   const id = params.id as string ?? '';
   const res = await storage.get(id);
 
   if (res.value !== null) {
-    const { paste } = res.value;
-    contents = paste;
-    status = 200;
-  } else {
-    contents = errorPage();
-    status = 404;
-    contentType = 'text/html';
+    return new Response(res.value.paste, {
+      status: 200,
+      headers: { 'content-type': 'text/plain' },
+    });
   }
 
-  return new Response(contents, {
-    status,
-    headers: {
-      'content-type': contentType,
-    },
+  return new Response(errorPage(), {
+    status: 404,
+    headers: { 'content-type': 'text/html' },
   });
 });
 
 app.post('/save', async (req) => {
-  let status = 302;
-  let contents = '';
-  const headers = new Headers({
-    'content-type': 'text/html',
-  });
+  const headers = new Headers({ 'content-type': 'text/html' });
 
-  const form = await req.formData();
-  const customUrl = form.get('url') as string;
-  const paste = form.get('paste') as string;
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const customUrl = (form.get('url') as string) ?? '';
+  const paste = (form.get('paste') as string) ?? '';
   const slug = createSlug(customUrl);
+
+  if (paste.length > MAX_PASTE_SIZE) {
+    return new Response(
+      homePage({
+        paste,
+        url: customUrl,
+        errors: {
+          url: `Paste exceeds maximum length of ${MAX_PASTE_SIZE} characters`,
+        },
+      }),
+      { status: 422, headers },
+    );
+  }
 
   let editCode: string | undefined = form.get('editcode') as string;
   if (typeof editCode === 'string') {
@@ -212,143 +255,173 @@ app.post('/save', async (req) => {
     const res = await storage.get(slug);
 
     if (slug === 'guide' || res.value !== null) {
-      status = 422;
-
-      contents = homePage({
-        paste,
-        url: customUrl,
-        errors: { url: `url unavailable: ${customUrl}` },
-      });
-    } else {
-      await storage.set(slug, { paste, editCode });
-      status = 302;
-      headers.set('location', '/' + slug.trim());
-    }
-  } else {
-    let id = '';
-    let exists = true;
-
-    for (; exists;) {
-      id = generateId();
-      exists = await storage.get(id).then(
-        (r) => r.value !== null,
+      return new Response(
+        homePage({
+          paste,
+          url: customUrl,
+          errors: { url: `URL unavailable: ${customUrl}` },
+        }),
+        { status: 422, headers },
       );
     }
 
-    await storage.set(id, { paste, editCode });
-    status = 302;
-    headers.set('location', '/' + id.trim());
+    await storage.set(slug, paste, editCode);
+    headers.set('location', '/' + slug.trim());
+    return new Response('', { status: 302, headers });
   }
 
-  return new Response(contents, {
-    status,
-    headers,
-  });
+  let id = '';
+  let exists = true;
+
+  for (; exists;) {
+    id = generateId();
+    exists = await storage.get(id).then((r) => r.value !== null);
+  }
+
+  await storage.set(id, paste, editCode);
+  headers.set('location', '/' + id.trim());
+  return new Response('', { status: 302, headers });
 });
 
 app.post('/:id/save', async (req, params) => {
-  let contents = '302';
-  let status = 302;
-
   const id = params.id as string ?? '';
-  const form = await req.formData();
-  const paste = form.get('paste') as string;
+  const headers = new Headers({ 'content-type': 'text/html' });
+
+  if (id.trim().length === 0) {
+    headers.set('location', '/');
+    return new Response('', { status: 302, headers });
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return new Response('Bad Request', { status: 400 });
+  }
+
+  const paste = (form.get('paste') as string) ?? '';
+
+  if (paste.length > MAX_PASTE_SIZE) {
+    return new Response('Paste too large', { status: 422, headers });
+  }
+
   let editCode: string | undefined = form.get('editcode') as string;
   if (typeof editCode === 'string') {
     editCode = editCode.trim() || undefined;
   }
 
-  const headers = new Headers({
-    'content-type': 'text/html',
-  });
+  const res = await storage.get(id);
+  if (res.value === null) {
+    return new Response(errorPage(), { status: 404, headers });
+  }
 
-  if (id.trim().length === 0) {
-    headers.set('location', '/');
-  } else {
-    const res = await storage.get(id);
-    const existing = res.value as Paste;
-    const hasEditCode = Boolean(existing.editCode);
+  const existing = res.value;
+  const hasEditCode = Boolean(existing.editCodeHash);
 
+  if (hasEditCode) {
     if (
-      hasEditCode &&
-      existing.editCode !== editCode
+      !editCode ||
+      !(await verifyEditCode(editCode, existing.editCodeHash!))
     ) {
-      // editCode mismatch
-      status = 400;
-      contents = editPage({
-        id,
-        paste,
-        hasEditCode,
-        errors: { editCode: 'invalid edit code' },
-      });
-    } else {
-      await storage.set(id, { ...existing, paste });
-      headers.set('location', '/' + id);
+      return new Response(
+        editPage({
+          id,
+          paste,
+          hasEditCode,
+          errors: { editCode: 'Invalid edit code' },
+        }),
+        { status: 400, headers },
+      );
     }
   }
 
-  return new Response(contents, {
-    status,
-    headers,
-  });
+  await storage.update(id, paste, existing.editCodeHash);
+  headers.set('location', '/' + id);
+  return new Response('', { status: 302, headers });
 });
 
 app.post('/:id/delete', async (req, params) => {
-  let contents = '302';
-  let status = 302;
-  const headers = new Headers({
-    'content-type': 'text/html',
-  });
-
   const id = params.id as string ?? '';
-  const form = await req.formData();
+  const headers = new Headers({ 'content-type': 'text/html' });
+
+  if (id.trim().length === 0) {
+    headers.set('location', '/');
+    return new Response('', { status: 302, headers });
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    return new Response('Bad Request', { status: 400 });
+  }
+
   let editCode: string | undefined = form.get('editcode') as string;
   if (typeof editCode === 'string') {
     editCode = editCode.trim() || undefined;
   }
 
-  if (id.trim().length === 0) {
-    headers.set('location', '/');
-  } else {
-    const res = await storage.get(id);
-    const existing = res.value as Paste;
-    const hasEditCode = Boolean(existing.editCode);
+  const res = await storage.get(id);
+  if (res.value === null) {
+    return new Response(errorPage(), { status: 404, headers });
+  }
 
+  const existing = res.value;
+  const hasEditCode = Boolean(existing.editCodeHash);
+
+  if (hasEditCode) {
     if (
-      hasEditCode &&
-      existing.editCode !== editCode
+      !editCode ||
+      !(await verifyEditCode(editCode, existing.editCodeHash!))
     ) {
-      // editCode mismatch
-      status = 400;
-      contents = deletePage({
-        id,
-        hasEditCode,
-        errors: { editCode: 'invalid edit code' },
-      });
-    } else {
-      await storage.delete(id);
-      headers.set('location', '/');
+      return new Response(
+        deletePage({
+          id,
+          hasEditCode,
+          errors: { editCode: 'Invalid edit code' },
+        }),
+        { status: 400, headers },
+      );
     }
   }
 
-  return new Response(contents, {
-    status,
-    headers,
-  });
+  await storage.delete(id);
+  headers.set('location', '/');
+  return new Response('', { status: 302, headers });
 });
 
-Deno.serve({ port: Number(SERVER_PORT) }, app.handler.bind(app));
+Deno.serve({ port: Number(SERVER_PORT) }, (req, info) => {
+  const ip = info.remoteAddr.hostname;
+
+  if (!checkRateLimit(ip)) {
+    return new Response('Too Many Requests', {
+      status: 429,
+      headers: { 'Retry-After': '60' },
+    });
+  }
+
+  if (req.method === 'POST' && !checkCsrf(req)) {
+    return new Response('Forbidden', { status: 403 });
+  }
+
+  return app.handler(req);
+});
+
+// deno-lint-ignore no-explicit-any
+type MarkedToken = { tokens: any[]; depth: number };
 
 function createParser() {
   const tocItems: TocItem[] = [];
 
   const renderer = {
-    heading(text: string, level: number) {
+    // deno-lint-ignore no-explicit-any
+    heading(this: any, { tokens, depth }: MarkedToken) {
+      const text: string = this.parser.parseInline(tokens);
       const anchor = createSlug(text);
-      const newItem = { level, text, anchor, subitems: [] };
+      const newItem = { level: depth, text, anchor, subitems: [] };
 
       tocItems.push(newItem);
-      return `<h${level} id="${anchor}"><a href="#${anchor}">${text}</a></h${level}>`;
+      return `<h${depth} id="${anchor}"><a href="#${anchor}">${text}</a></h${depth}>`;
     },
   };
 
@@ -373,11 +446,12 @@ function createSlug(text = '') {
 
   for (let i = 0; i < lines.length; i++) {
     const slug = lines[i].toString().toLowerCase()
-      .replace(/\s+/g, '-') // Replace spaces with -
-      .replace(/[^\w\-]+/g, '') // Remove all non-word chars
-      .replace(/\-\-+/g, '-') // Replace multiple - with single -
-      .replace(/^-+/, '') // Trim - from start of text
-      .replace(/-+$/, ''); // Trim - from end of text
+      .replace(/<[^>]*>/g, '') // strip HTML tags
+      .replace(/\s+/g, '-')
+      .replace(/[^\w\-]+/g, '')
+      .replace(/\-\-+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '');
 
     if (slug.length > 0) return slug;
   }
@@ -385,18 +459,10 @@ function createSlug(text = '') {
   return '';
 }
 
-function uid() {
-  // https://github.com/lukeed/uid
-  // MIT License
-  // Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
-  let IDX = 36, HEX = '';
-  while (IDX--) HEX += IDX.toString(36);
-
-  return () => {
-    let str = '', num = 6;
-    while (num--) str += HEX[Math.random() * 36 | 0];
-    return str;
-  };
+function generateId(): string {
+  const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (b) => chars[b % 36]).join('');
 }
 
 function buildToc(items: TocItem[] = []) {

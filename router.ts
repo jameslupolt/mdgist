@@ -13,11 +13,13 @@ interface Route {
 
 export class Router {
   routes: Route[];
+  defaultHeaders: Record<string, string>;
   get: Register;
   post: Register;
 
-  constructor() {
+  constructor(defaultHeaders: Record<string, string> = {}) {
     this.routes = [];
+    this.defaultHeaders = defaultHeaders;
     this.get = this.add.bind(this, 'GET');
     this.post = this.add.bind(this, 'POST');
   }
@@ -41,10 +43,22 @@ export class Router {
         const result = route.pattern.exec(req.url);
         const params = result?.pathname.groups || {};
         res = await route.handler(req, params);
-        if (res) return res;
+        if (res) return this.applyHeaders(res);
       }
     }
 
-    return new Response('404', { status: 404 });
+    return this.applyHeaders(new Response('404', { status: 404 }));
+  }
+
+  private applyHeaders(res: Response): Response {
+    const headers = new Headers(res.headers);
+    for (const [key, value] of Object.entries(this.defaultHeaders)) {
+      if (!headers.has(key)) headers.set(key, value);
+    }
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
   }
 }
