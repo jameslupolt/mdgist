@@ -4,7 +4,8 @@
     "flags": "deno run --allow-env --allow-net --unstable-kv --unstable-cron --allow-read",
     "start": "deno task flags main.ts",
     "debug": "deno task flags --inspect-brk main.ts",
-    "dev": "deno task flags --watch main.ts"
+    "dev": "deno task flags --watch main.ts",
+    "test": "deno test --allow-run --allow-net --allow-env --allow-read --allow-write"
   },
   "imports": {
     "@std/path": "jsr:@std/path@^1.1.4",

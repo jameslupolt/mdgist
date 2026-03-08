@@ -119,6 +119,12 @@ export const homePage = ({
             <option value="2592000000">30 days</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>
+            <input name="private" type="checkbox" />
+            Private paste
+          </label>
+        </div>
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save</button>
@@ -132,19 +138,24 @@ export const homePage = ({
   <script src="/editor.js"></script>
 `);
 
-export const pastePage = ({ id = '', html = '', title = '' } = {}) => layout(title, `
+export const pastePage = (
+  { id = '', html = '', title = '', viewToken = '' } = {},
+) => {
+  const viewQuery = viewToken ? `?view=${encodeURIComponent(viewToken)}` : '';
+  return layout(title, `
   <main>
     <article class="paste-container">
       ${html}
     </article>
     <div class="form-actions">
-      <a class="btn btn-secondary" href="/${escapeHtml(id)}/raw">Raw</a>
-      <a class="btn btn-secondary" href="/${escapeHtml(id)}/edit">Edit</a>
-      <a class="btn btn-secondary" href="/${escapeHtml(id)}/history">History</a>
-      <a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>
+      <a class="btn btn-secondary" href="/${escapeHtml(id)}/raw${viewQuery}">Raw</a>
+      <a class="btn btn-secondary" href="/${escapeHtml(id)}/edit${viewQuery}">Edit</a>
+      <a class="btn btn-secondary" href="/${escapeHtml(id)}/history${viewQuery}">History</a>
+      <a class="btn btn-danger" href="/${escapeHtml(id)}/delete${viewQuery}">Delete</a>
     </div>
   </main>
 `);
+};
 
 export const guidePage = ({ html = '', title = '' } = {}) => layout(title, `
   <main>
@@ -155,7 +166,13 @@ export const guidePage = ({ html = '', title = '' } = {}) => layout(title, `
 `);
 
 export const editPage = (
-  { id = '', paste = '', hasEditCode = false, errors = { editCode: '' } } = {},
+  {
+    id = '',
+    paste = '',
+    hasEditCode = false,
+    viewToken = '',
+    errors = { editCode: '' },
+  } = {},
 ) => layout(`Edit - ${id}`, `
   <main>
     ${Tabs()}
@@ -164,6 +181,7 @@ export const editPage = (
       ${Editor(paste)}
 
       <input class="sr-only" name="url" type="text" value="${escapeHtml(id)}" disabled />
+      <input class="sr-only" name="view" type="text" value="${escapeHtml(viewToken)}" />
       <div class="form-row">
         ${_if(hasEditCode, `
           <div class="form-group">
@@ -198,13 +216,16 @@ export const editPage = (
 `);
 
 export const deletePage = (
-  { id = '', hasEditCode = false, errors = { editCode: '' } } = {}
-) => layout(`Delete - ${id}`, `
+  { id = '', hasEditCode = false, viewToken = '', errors = { editCode: '' } } = {}
+) => {
+  const viewQuery = viewToken ? `?view=${encodeURIComponent(viewToken)}` : '';
+  return layout(`Delete - ${id}`, `
   <main>
     <div class="delete-confirm">
       <p>Are you sure you want to delete <strong>${escapeHtml(id)}</strong>?</p>
     </div>
     <form method="post" action="/${escapeHtml(id)}/delete">
+      <input class="sr-only" name="view" type="text" value="${escapeHtml(viewToken)}" />
       <div class="form-row">
         ${_if(hasEditCode, `
           <div class="form-group">
@@ -228,11 +249,12 @@ export const deletePage = (
 
       <div class="form-actions">
         <button type="submit" class="btn btn-danger">Delete</button>
-        <a class="btn btn-secondary" href="/${escapeHtml(id)}">Cancel</a>
+        <a class="btn btn-secondary" href="/${escapeHtml(id)}${viewQuery}">Cancel</a>
       </div>
     </form>
   </main>
 `);
+};
 
 export const errorPage = () => layout('404', `
   <main class="error-page">
@@ -242,7 +264,11 @@ export const errorPage = () => layout('404', `
   </main>
 `);
 
-export const historyPage = ({ id = '', versions = [] as { timestamp: number }[] } = {}) => layout(`History - ${id}`, `
+export const historyPage = (
+  { id = '', versions = [] as { timestamp: number }[], viewToken = '' } = {},
+) => {
+  const viewQuery = viewToken ? `?view=${encodeURIComponent(viewToken)}` : '';
+  return layout(`History - ${id}`, `
   <main>
     <div class="paste-container">
       <h1>History &mdash; ${escapeHtml(id)}</h1>
@@ -250,7 +276,7 @@ export const historyPage = ({ id = '', versions = [] as { timestamp: number }[] 
         <ul class="history-list">
           ${versions.map((v: { timestamp: number }) => `
             <li>
-              <a href="/${escapeHtml(id)}/history/${v.timestamp}">
+              <a href="/${escapeHtml(id)}/history/${v.timestamp}${viewQuery}">
                 ${new Date(v.timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')}
               </a>
             </li>
@@ -258,8 +284,9 @@ export const historyPage = ({ id = '', versions = [] as { timestamp: number }[] 
         </ul>
       `}
       <div class="form-actions">
-        <a class="btn btn-secondary" href="/${escapeHtml(id)}">Back to paste</a>
+        <a class="btn btn-secondary" href="/${escapeHtml(id)}${viewQuery}">Back to paste</a>
       </div>
     </div>
   </main>
 `);
+};
