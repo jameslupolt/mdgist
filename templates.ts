@@ -68,7 +68,7 @@ const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) 
 
     ${content}
 
-    <footer></footer>
+    <footer><a href="https://github.com/jameslupolt/mdgist">GitHub</a></footer>
     <script src="/password-toggle.js"></script>
     <script src="/theme-switch.js"></script>
   </body>
