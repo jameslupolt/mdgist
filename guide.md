@@ -32,9 +32,10 @@ The following guide has been adapted with modifications from [learnxinyminutes](
 ## Custom URLs
 
 When saving a new paste, you may choose to use a custom URL.
-* The maximum URL length is 40 characters.
-* The only reserved URL is `guide`, for the guide you are reading right now.
-* If a custom URL is not provided, it will be generated for you.
+
+- The maximum URL length is 40 characters.
+- Reserved custom URLs: `guide`, `api`, `raw`, `edit`, `delete`, `history`, `save`.
+- If a custom URL is not provided, it will be generated for you.
 
 ## Edit Codes
 
@@ -57,35 +58,38 @@ within that element's contents.-->
 
 ```md
 # This is an <h1>
+
 ## This is an <h2>
+
 ### This is an <h3>
+
 #### This is an <h4>
+
 ##### This is an <h5>
+
 ###### This is an <h6>
 ```
 
 Markdown also provides us with two alternative ways of indicating h1 and h2.
 
 ```md
-This is an h1
-=============
+# This is an h1
 
-This is an h2
--------------
+## This is an h2
 ```
 
 ## Simple text styles
 
 ```md
-*This text is in italics.*
+_This text is in italics._
 _And so is this text._
 
 **This text is in bold.**
-__And so is this text.__
+**And so is this text.**
 
-***This text is in both.***
+_**This text is in both.**_
 **_As is this!_**
-*__And this!__*
+_**And this!**_
 
 ~~This text is rendered with strikethrough.~~
 ```
@@ -98,7 +102,6 @@ This is a paragraph. I'm typing in a paragraph isn't this fun?
 Now I'm in paragraph 2.
 I'm still in paragraph 2 too!
 
-
 I'm in paragraph three!
 ```
 
@@ -110,22 +113,23 @@ I'm in paragraph three!
 > It doesn't make a difference so long as they start with a `>`.
 
 > You can also use more than one level
+>
 >> of indentation?
-> How neat is that?
+>> How neat is that?
 ```
 
 ## Lists
 
 ```md
-* Item
-* Item
-* Another item
+- Item
+- Item
+- Another item
 
 or
 
-+ Item
-+ Item
-+ One more item
+- Item
+- Item
+- One more item
 
 or
 
@@ -150,8 +154,8 @@ or
 1. Item one
 2. Item two
 3. Item three
-    * Sub-item
-    * Sub-item
+   - Sub-item
+   - Sub-item
 4. Item four
 ```
 
@@ -159,9 +163,10 @@ or
 
 ```md
 Boxes below without the 'x' are unchecked HTML checkboxes.
+
 - [ ] First task to complete.
 - [ ] Second task that needs done
-This checkbox below will be a checked HTML checkbox.
+      This checkbox below will be a checked HTML checkbox.
 - [x] This task has been completed
 ```
 
@@ -176,11 +181,15 @@ This checkbox below will be a checked HTML checkbox.
 </pre>
 
 ## Horizontal rule
+
 ```md
-***
 ---
-- - -
-****************
+
+---
+
+---
+
+---
 ```
 
 ## Links
@@ -229,16 +238,16 @@ Will generate the table of contents containing all headings in your document.
 ## Tables
 
 ```md
-| Col1         | Col2     | Col3          |
+| Col1         |   Col2   |          Col3 |
 | :----------- | :------: | ------------: |
 | Left-aligned | Centered | Right-aligned |
-| blah         | blah     | blah          |
+| blah         |   blah   |          blah |
 ```
 
 or:
 
 ```md
-Col 1 | Col2 | Col3
-:-- | :-: | --:
-Ugh this is so ugly | make it | stop
+| Col 1               |  Col2   | Col3 |
+| :------------------ | :-----: | ---: |
+| Ugh this is so ugly | make it | stop |
 ```

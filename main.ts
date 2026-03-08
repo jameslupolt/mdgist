@@ -1,7 +1,6 @@
 import xss from 'xss';
 import { Marked } from 'marked';
 import hljs from 'highlight.js';
-import { resolve } from '@std/path';
 import { walk } from '@std/fs';
 import { SERVER_PORT } from './env.ts';
 import { Router } from './router.ts';
@@ -25,10 +24,26 @@ interface TocItem {
 }
 
 const MAX_PASTE_SIZE = 40_000;
+const MAX_CUSTOM_URL_LENGTH = 40;
 const RATE_LIMIT = 1000;
 const RATE_WINDOW = 60_000;
+const ALLOWED_TTL_VALUES = new Set([
+  3_600_000,
+  86_400_000,
+  604_800_000,
+  2_592_000_000,
+]);
+const RESERVED_SLUGS = new Set([
+  'guide',
+  'api',
+  'raw',
+  'edit',
+  'delete',
+  'history',
+  'save',
+]);
 
-const STATIC_ROOT = resolve('./static');
+const STATIC_ROOT = './static';
 const FILES = new Map<string, string>();
 const MIMES: Record<string, string> = {
   'js': 'text/javascript',
@@ -110,8 +125,21 @@ const SECURITY_HEADERS: Record<string, string> = {
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
 };
 
-const HTML_HEADERS = { 'content-type': 'text/html' };
-const JSON_HEADERS = { 'content-type': 'application/json' };
+const HTML_HEADERS = { 'content-type': 'text/html; charset=utf-8' };
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
+
+function parseTtl(raw: unknown): number | undefined | null {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const ttl = Number(raw);
+  if (!Number.isInteger(ttl) || ttl <= 0 || !ALLOWED_TTL_VALUES.has(ttl)) {
+    return null;
+  }
+  return ttl;
+}
+
+function logError(context: string, error: unknown) {
+  console.error(`[${context}]`, error);
+}
 
 const app = new Router(SECURITY_HEADERS);
 
@@ -174,7 +202,8 @@ app.get('/:id', async (_req, params) => {
         headers: HTML_HEADERS,
       });
     }
-  } catch {
+  } catch (error) {
+    logError('GET /:id', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 
@@ -199,7 +228,8 @@ app.get('/:id/edit', async (_req, params) => {
         headers: HTML_HEADERS,
       });
     }
-  } catch {
+  } catch (error) {
+    logError('GET /:id/edit', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 
@@ -224,7 +254,8 @@ app.get('/:id/delete', async (_req, params) => {
         headers: HTML_HEADERS,
       });
     }
-  } catch {
+  } catch (error) {
+    logError('GET /:id/delete', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 
@@ -244,10 +275,11 @@ app.get('/:id/raw', async (_req, params) => {
     if (res.value !== null) {
       return new Response(res.value.paste, {
         status: 200,
-        headers: { 'content-type': 'text/plain' },
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
       });
     }
-  } catch {
+  } catch (error) {
+    logError('GET /:id/raw', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 
@@ -272,7 +304,8 @@ app.get('/:id/history', async (_req, params) => {
       status: 200,
       headers: HTML_HEADERS,
     });
-  } catch {
+  } catch (error) {
+    logError('GET /:id/history', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 });
@@ -294,14 +327,22 @@ app.get('/:id/history/:timestamp', async (_req, params) => {
       const { paste } = res.value;
       let { html, title } = parse(paste);
       html = xss(html, XSS_OPTIONS);
-      if (!title) title = `${id} (${new Date(timestamp).toISOString().replace('T', ' ').replace(/\.\d+Z/, ' UTC')})`;
+      if (!title) {
+        title = `${id} (${
+          new Date(timestamp).toISOString().replace('T', ' ').replace(
+            /\.\d+Z/,
+            ' UTC',
+          )
+        })`;
+      }
 
       return new Response(pastePage({ id, html, title }), {
         status: 200,
         headers: HTML_HEADERS,
       });
     }
-  } catch {
+  } catch (error) {
+    logError('GET /:id/history/:timestamp', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 
@@ -319,13 +360,17 @@ app.get('/api/:id', async (_req, params) => {
     const res = await storage.get(id);
 
     if (res.value !== null) {
-      return new Response(JSON.stringify({
-        id,
-        paste: res.value.paste,
-        hasEditCode: Boolean(res.value.editCodeHash),
-      }), { status: 200, headers: JSON_HEADERS });
+      return new Response(
+        JSON.stringify({
+          id,
+          paste: res.value.paste,
+          hasEditCode: Boolean(res.value.editCodeHash),
+        }),
+        { status: 200, headers: JSON_HEADERS },
+      );
     }
-  } catch {
+  } catch (error) {
+    logError('GET /api/:id', error);
     return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
       status: 500,
       headers: JSON_HEADERS,
@@ -345,15 +390,50 @@ app.post('/save', async (req) => {
   let form: FormData;
   try {
     form = await req.formData();
-  } catch {
+  } catch (error) {
+    logError('POST /save (formData)', error);
     return new Response('Bad Request', { status: 400 });
   }
 
   const customUrl = (form.get('url') as string) ?? '';
   const paste = (form.get('paste') as string) ?? '';
+  if (paste.length === 0) {
+    return new Response(
+      homePage({
+        paste,
+        url: customUrl,
+        errors: { url: 'Paste content required' },
+      }),
+      { status: 422, headers },
+    );
+  }
+
+  if (customUrl.length > MAX_CUSTOM_URL_LENGTH) {
+    return new Response(
+      homePage({
+        paste,
+        url: customUrl,
+        errors: {
+          url: `Custom URL cannot exceed ${MAX_CUSTOM_URL_LENGTH} characters`,
+        },
+      }),
+      { status: 422, headers },
+    );
+  }
+
   const slug = createSlug(customUrl);
-  const ttlRaw = (form.get('ttl') as string) ?? '';
-  const ttl = ttlRaw ? Number(ttlRaw) : undefined;
+  const ttl = parseTtl((form.get('ttl') as string) ?? '');
+
+  if (ttl === null) {
+    return new Response(
+      homePage({
+        paste,
+        url: customUrl,
+        errors: { url: 'Invalid expiry value' },
+      }),
+      { status: 422, headers },
+    );
+  }
 
   if (paste.length > MAX_PASTE_SIZE) {
     return new Response(
@@ -377,7 +457,7 @@ app.post('/save', async (req) => {
     if (slug.length > 0) {
       const res = await storage.get(slug);
 
-      if (slug === 'guide' || slug === 'api' || res.value !== null) {
+      if (RESERVED_SLUGS.has(slug) || res.value !== null) {
         return new Response(
           homePage({
             paste,
@@ -404,7 +484,8 @@ app.post('/save', async (req) => {
     await storage.set(id, paste, editCode, ttl);
     headers.set('location', '/' + id.trim());
     return new Response('', { status: 302, headers });
-  } catch {
+  } catch (error) {
+    logError('POST /save', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 });
@@ -416,7 +497,27 @@ app.post('/api/save', async (req) => {
     const paste = (body.paste as string) ?? '';
     const customUrl = (body.url as string) ?? '';
     const editCode = (body.editCode as string) ?? undefined;
-    const ttl = body.ttl ? Number(body.ttl) : undefined;
+    const ttl = parseTtl(body.ttl);
+
+    if (customUrl.length > MAX_CUSTOM_URL_LENGTH) {
+      return new Response(
+        JSON.stringify({
+          error: `Custom URL cannot exceed ${MAX_CUSTOM_URL_LENGTH} characters`,
+        }),
+        {
+          status: 422,
+          headers: JSON_HEADERS,
+        },
+      );
+    }
+
+    if (ttl === null) {
+      return new Response(JSON.stringify({ error: 'Invalid expiry value' }), {
+        status: 422,
+        headers: JSON_HEADERS,
+      });
+    }
+
     const slug = createSlug(customUrl);
 
     if (paste.length === 0) {
@@ -427,19 +528,25 @@ app.post('/api/save', async (req) => {
     }
 
     if (paste.length > MAX_PASTE_SIZE) {
-      return new Response(JSON.stringify({ error: `Paste exceeds ${MAX_PASTE_SIZE} characters` }), {
-        status: 422,
-        headers: JSON_HEADERS,
-      });
+      return new Response(
+        JSON.stringify({ error: `Paste exceeds ${MAX_PASTE_SIZE} characters` }),
+        {
+          status: 422,
+          headers: JSON_HEADERS,
+        },
+      );
     }
 
     if (slug.length > 0) {
       const res = await storage.get(slug);
-      if (slug === 'guide' || slug === 'api' || res.value !== null) {
-        return new Response(JSON.stringify({ error: `URL unavailable: ${customUrl}` }), {
-          status: 422,
-          headers: JSON_HEADERS,
-        });
+      if (RESERVED_SLUGS.has(slug) || res.value !== null) {
+        return new Response(
+          JSON.stringify({ error: `URL unavailable: ${customUrl}` }),
+          {
+            status: 422,
+            headers: JSON_HEADERS,
+          },
+        );
       }
 
       await storage.set(slug, paste, editCode, ttl);
@@ -461,7 +568,8 @@ app.post('/api/save', async (req) => {
       status: 201,
       headers: JSON_HEADERS,
     });
-  } catch {
+  } catch (error) {
+    logError('POST /api/save', error);
     return new Response(JSON.stringify({ error: 'Bad request' }), {
       status: 400,
       headers: JSON_HEADERS,
@@ -526,7 +634,8 @@ app.post('/:id/save', async (req, params) => {
     await storage.update(id, paste, existing.editCodeHash);
     headers.set('location', '/' + id);
     return new Response('', { status: 302, headers });
-  } catch {
+  } catch (error) {
+    logError('POST /:id/save', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 });
@@ -581,7 +690,8 @@ app.post('/:id/delete', async (req, params) => {
     await storage.delete(id);
     headers.set('location', '/');
     return new Response('', { status: 302, headers });
-  } catch {
+  } catch (error) {
+    logError('POST /:id/delete', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 });
@@ -630,7 +740,9 @@ function createParser() {
       const highlighted = language
         ? hljs.highlight(text, { language }).value
         : hljs.highlightAuto(text).value;
-      return `<pre><code class="hljs${language ? ` language-${language}` : ''}">${highlighted}</code></pre>`;
+      return `<pre><code class="hljs${
+        language ? ` language-${language}` : ''
+      }">${highlighted}</code></pre>`;
     },
   };
 
