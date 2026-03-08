@@ -2,8 +2,11 @@ version: 2
 
 project_name: mdgist
 
+monorepo:
+  tag_prefix: cli/
+
 builds:
-  - main: .
+  - main: ./cli
     binary: mdgist
     ldflags:
       - -s -w -X main.version={{.Version}}
