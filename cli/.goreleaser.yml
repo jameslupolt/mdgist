@@ -34,3 +34,14 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^ci:"
+
+brews:
+  - repository:
+      owner: jameslupolt
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/jameslupolt/mdgist
+    description: Create and share markdown pastes from the terminal
+    license: MIT
+    install: |
+      bin.install "mdgist"
