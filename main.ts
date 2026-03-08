@@ -1045,15 +1045,16 @@ Deno.serve({ port: Number(SERVER_PORT) }, (req, info) => {
   });
 });
 
-// deno-lint-ignore no-explicit-any
-type MarkedToken = { tokens: any[]; depth: number };
+interface MarkedToken {
+  tokens: { raw: string; text: string; type: string }[];
+  depth: number;
+}
 
 function createParser() {
   const tocItems: TocItem[] = [];
 
   const renderer = {
-    // deno-lint-ignore no-explicit-any
-    heading(this: any, { tokens, depth }: MarkedToken) {
+    heading(this: { parser: { parseInline(tokens: MarkedToken['tokens']): string } }, { tokens, depth }: MarkedToken) {
       const text: string = this.parser.parseInline(tokens);
       const anchor = createSlug(text);
       const newItem = { level: depth, text, anchor, subitems: [] };

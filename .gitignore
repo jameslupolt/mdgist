@@ -1,2 +1,7 @@
 .vscode
 .env
+
+# CLI build artifacts
+cli/mdgist
+cli/mdgist.exe
+cli/dist/
