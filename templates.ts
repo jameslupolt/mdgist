@@ -68,6 +68,7 @@ const layout = (title: string, content: string, meta: { ogDesc?: string } = {}) 
     ${content}
 
     <footer></footer>
+    <script src="/password-toggle.js"></script>
     <script src="/theme-switch.js"></script>
   </body>
   </html>
@@ -103,6 +104,7 @@ export const homePage = ({
         </div>
         <div class="form-group">
           <input
+            id="create-password"
             name="password"
             type="password"
             placeholder="Password (optional)"
@@ -111,6 +113,10 @@ export const homePage = ({
             aria-invalid="${Boolean(errors.password)}"
             ${_if(errors.password, 'aria-describedby="password-error"')}
           />
+          <label>
+            <input type="checkbox" data-toggle-password="create-password" />
+            Show password
+          </label>
           ${_if(errors.password, `
             <small class="error" id="password-error">${escapeHtml(errors.password)}</small>
           `)}
@@ -302,6 +308,7 @@ export const passwordPage = (
         <div class="form-row">
           <div class="form-group">
             <input
+              id="unlock-password"
               name="password"
               type="password"
               placeholder="Paste password"
@@ -311,6 +318,10 @@ export const passwordPage = (
               aria-invalid="${Boolean(error)}"
               ${_if(error, 'aria-describedby="password-error"')}
             />
+            <label>
+              <input type="checkbox" data-toggle-password="unlock-password" />
+              Show password
+            </label>
             ${_if(error, `<small class="error" id="password-error">${escapeHtml(error)}</small>`)}
           </div>
         </div>
