@@ -96,7 +96,7 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		fmt.Fprintf(os.Stderr, "Deleted: %s/%s\n", serverURL, *deleteID)
+		fmt.Printf("Deleted: %s/%s\n", serverURL, *deleteID)
 		return
 	}
 
@@ -127,7 +127,7 @@ func main() {
 
 	fmt.Println(serverURL + result.URL)
 	if result.OwnerToken != "" {
-		fmt.Fprintf(os.Stderr, "owner-token: %s\n", result.OwnerToken)
+		fmt.Printf("owner-token: %s\n", result.OwnerToken)
 	}
 }
 

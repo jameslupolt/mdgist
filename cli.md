@@ -64,10 +64,10 @@ cat log.md | mdgist -s http://localhost:8000
 
 ## Deleting Pastes
 
-When you create a paste, an owner token is printed to stderr:
+When you create a paste, an owner token is printed alongside the URL:
 
 ```
-$ cat notes.md | mdgist
+cat notes.md | mdgist
 https://mdgist.com/abc123
 owner-token: xYz123...
 ```

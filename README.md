@@ -42,10 +42,10 @@ The server can also be set with the `MDGIST_SERVER` environment variable.
 
 ### Deleting Pastes
 
-When you create a paste, an owner token is printed to stderr:
+When you create a paste, an owner token is printed alongside the URL:
 
 ```bash
-$ cat notes.md | mdgist
+cat notes.md | mdgist
 https://mdgist.com/abc123
 owner-token: xYz123...
 ```
