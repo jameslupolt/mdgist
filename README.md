@@ -40,6 +40,28 @@ mdgist --delete abc123 --token <owner-token>
 
 The server can also be set with the `MDGIST_SERVER` environment variable.
 
+### Deleting Pastes
+
+When you create a paste, an owner token is printed to stderr:
+
+```bash
+$ cat notes.md | mdgist
+https://mdgist.com/abc123
+owner-token: xYz123...
+```
+
+Use the token to delete the paste later:
+
+```bash
+mdgist --delete abc123 --token xYz123...
+```
+
+You can also delete with an edit code:
+
+```bash
+mdgist -d abc123 -e myeditcode
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
