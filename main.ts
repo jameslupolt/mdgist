@@ -889,6 +889,68 @@ app.post('/api/save', async (req) => {
   }
 });
 
+// API: Delete paste (JSON)
+app.post('/api/:id/delete', async (req, params) => {
+  const id = params.id as string ?? '';
+
+  try {
+    const res = await storage.get(id);
+    if (res.value === null) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: JSON_HEADERS,
+      });
+    }
+
+    const existing = res.value;
+
+    // Password check
+    const access = await hasPastePasswordAccess(req, id, existing.passwordHash);
+    if (!access.ok) {
+      return new Response(JSON.stringify({ error: 'Password required' }), {
+        status: 401,
+        headers: JSON_HEADERS,
+      });
+    }
+
+    // Check owner token from header
+    const ownerToken = req.headers.get('x-owner-token');
+    if (ownerToken) {
+      const storedHash = await storage.getOwnerTokenHash(id);
+      if (storedHash && await verifyOwnerToken(ownerToken, storedHash)) {
+        await storage.delete(id);
+        return new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: JSON_HEADERS,
+        });
+      }
+    }
+
+    // Check edit code from header
+    const editCode = req.headers.get('x-edit-code');
+    if (editCode && existing.editCodeHash) {
+      if (await verifyEditCode(editCode, existing.editCodeHash)) {
+        await storage.delete(id);
+        return new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: JSON_HEADERS,
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 403,
+      headers: JSON_HEADERS,
+    });
+  } catch (error) {
+    logError('POST /api/:id/delete', error);
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+      status: 500,
+      headers: JSON_HEADERS,
+    });
+  }
+});
+
 app.post('/:id/unlock', async (req, params) => {
   const id = params.id as string ?? '';
   const headers = new Headers(HTML_HEADERS);

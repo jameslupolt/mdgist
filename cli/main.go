@@ -34,28 +34,36 @@ type createRequest struct {
 }
 
 type createResponse struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID         string `json:"id"`
+	URL        string `json:"url"`
+	OwnerToken string `json:"ownerToken"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
+type deleteResponse struct {
+	Deleted bool `json:"deleted"`
+}
+
 func main() {
 	urlFlag := flag.String("url", "", "Custom URL slug")
 	password := flag.String("password", "", "Password-protect the paste")
-	editCode := flag.String("edit-code", "", "Edit code to lock edits")
+	editCode := flag.String("edit-code", "", "Edit code for edits or deletion")
 	ttlFlag := flag.String("ttl", "", "Time to live (1h, 1d, 1w, 30d)")
 	history := flag.Bool("history", false, "Enable edit history")
 	server := flag.String("server", "", "Server URL (default: $MDGIST_SERVER or "+defaultServer+")")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	deleteID := flag.String("delete", "", "Delete a paste by ID")
+	ownerToken := flag.String("token", "", "Owner token (for deletion)")
 
 	flag.StringVar(urlFlag, "u", "", "Custom URL slug (shorthand)")
 	flag.StringVar(password, "p", "", "Password (shorthand)")
 	flag.StringVar(editCode, "e", "", "Edit code (shorthand)")
 	flag.StringVar(ttlFlag, "t", "", "TTL (shorthand)")
 	flag.StringVar(server, "s", "", "Server URL (shorthand)")
+	flag.StringVar(deleteID, "d", "", "Delete paste (shorthand)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mdgist [options] [file]\n\n")
@@ -63,7 +71,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  cat README.md | mdgist\n")
 		fmt.Fprintf(os.Stderr, "  mdgist notes.md --ttl 1d\n")
-		fmt.Fprintf(os.Stderr, "  echo '# Hello' | mdgist -u my-doc -p secret\n\n")
+		fmt.Fprintf(os.Stderr, "  echo '# Hello' | mdgist -u my-doc -p secret\n")
+		fmt.Fprintf(os.Stderr, "  mdgist --delete abc123 --token <owner-token>\n")
+		fmt.Fprintf(os.Stderr, "  mdgist -d abc123 -e <edit-code>\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
@@ -76,6 +86,21 @@ func main() {
 	}
 
 	serverURL := resolveServer(*server)
+
+	// Delete mode
+	if *deleteID != "" {
+		if *ownerToken == "" && *editCode == "" {
+			fatal(fmt.Errorf("--delete requires --token (owner token) or --edit-code"))
+		}
+		err := deletePaste(serverURL, *deleteID, *ownerToken, *editCode, *password)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "Deleted: %s/%s\n", serverURL, *deleteID)
+		return
+	}
+
+	// Create mode
 	paste, err := readInput()
 	if err != nil {
 		fatal(err)
@@ -95,12 +120,15 @@ func main() {
 		History:  *history,
 	}
 
-	url, err := post(serverURL, req)
+	result, err := createPaste(serverURL, req)
 	if err != nil {
 		fatal(err)
 	}
 
-	fmt.Println(url)
+	fmt.Println(serverURL + result.URL)
+	if result.OwnerToken != "" {
+		fmt.Fprintf(os.Stderr, "owner-token: %s\n", result.OwnerToken)
+	}
 }
 
 func resolveServer(explicit string) string {
@@ -154,38 +182,77 @@ func parseTTL(raw string) (int, error) {
 	return val, nil
 }
 
-func post(serverURL string, req createRequest) (string, error) {
+func createPaste(serverURL string, req createRequest) (*createResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Post(serverURL+"/api/save", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("reading response: %w", err)
+		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusCreated {
 		var e errorResponse
 		if json.Unmarshal(respBody, &e) == nil && e.Error != "" {
-			return "", fmt.Errorf("server: %s", e.Error)
+			return nil, fmt.Errorf("server: %s", e.Error)
 		}
-		return "", fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 
 	var result createResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("parsing response: %w", err)
+		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 
-	return serverURL + result.URL, nil
+	return &result, nil
+}
+
+func deletePaste(serverURL, id, ownerToken, editCode, password string) error {
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequest("POST", serverURL+"/api/"+id+"/delete", nil)
+	if err != nil {
+		return err
+	}
+
+	if ownerToken != "" {
+		req.Header.Set("X-Owner-Token", ownerToken)
+	}
+	if editCode != "" {
+		req.Header.Set("X-Edit-Code", editCode)
+	}
+	if password != "" {
+		req.Header.Set("X-Paste-Password", password)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var e errorResponse
+		if json.Unmarshal(respBody, &e) == nil && e.Error != "" {
+			return fmt.Errorf("server: %s", e.Error)
+		}
+		return fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func fatal(err error) {

@@ -24,15 +24,18 @@ go install github.com/jameslupolt/mdgist/cli@latest
 cat README.md | mdgist
 mdgist notes.md
 echo '# Hello' | mdgist --url my-doc --password secret
+mdgist --delete abc123 --token <owner-token>
 ```
 
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--url` | `-u` | Custom URL slug |
 | `--password` | `-p` | Password-protect the paste |
-| `--edit-code` | `-e` | Edit code to lock edits |
+| `--edit-code` | `-e` | Edit code for edits or deletion |
 | `--ttl` | `-t` | Time to live (`1h`, `1d`, `1w`, `30d`) |
 | `--history` | | Enable edit history |
+| `--delete` | `-d` | Delete a paste by ID |
+| `--token` | | Owner token (for deletion) |
 | `--server` | `-s` | Server URL (default: `https://mdgist.com`) |
 
 The server can also be set with the `MDGIST_SERVER` environment variable.

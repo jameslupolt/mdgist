@@ -1,6 +1,6 @@
 # CLI
 
-Create pastes from the terminal with the `mdgist` command-line tool.
+Create and manage pastes from the terminal with the `mdgist` command-line tool.
 
 ```
 cat README.md | mdgist
@@ -32,9 +32,11 @@ Grab the latest binary from [GitHub Releases](https://github.com/jameslupolt/mdg
 |------|-------|-------------|
 | `--url` | `-u` | Custom URL slug |
 | `--password` | `-p` | Password-protect the paste |
-| `--edit-code` | `-e` | Edit code to lock edits |
+| `--edit-code` | `-e` | Edit code for edits or deletion |
 | `--ttl` | `-t` | Time to live (`1h`, `1d`, `1w`, `30d`) |
 | `--history` | | Enable edit history |
+| `--delete` | `-d` | Delete a paste by ID |
+| `--token` | | Owner token (for deletion) |
 | `--server` | `-s` | Server URL |
 | `--version` | | Print version |
 
@@ -58,4 +60,26 @@ Paste to a self-hosted instance:
 
 ```
 cat log.md | mdgist -s http://localhost:8000
+```
+
+## Deleting Pastes
+
+When you create a paste, an owner token is printed to stderr:
+
+```
+$ cat notes.md | mdgist
+https://mdgist.com/abc123
+owner-token: xYz123...
+```
+
+Use the token to delete the paste later:
+
+```
+mdgist --delete abc123 --token xYz123...
+```
+
+You can also delete with an edit code:
+
+```
+mdgist -d abc123 -e myeditcode
 ```
