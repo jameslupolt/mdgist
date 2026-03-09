@@ -34,18 +34,14 @@ type createRequest struct {
 }
 
 type createResponse struct {
-	ID         string `json:"id"`
-	URL        string `json:"url"`
-	OwnerToken string `json:"ownerToken"`
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-type deleteResponse struct {
-	Deleted bool `json:"deleted"`
-}
 
 func main() {
 	urlFlag := flag.String("url", "", "Custom URL slug")
@@ -56,7 +52,6 @@ func main() {
 	server := flag.String("server", "", "Server URL (default: $MDGIST_SERVER or "+defaultServer+")")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	deleteID := flag.String("delete", "", "Delete a paste by ID")
-	ownerToken := flag.String("token", "", "Owner token (for deletion)")
 
 	flag.StringVar(urlFlag, "u", "", "Custom URL slug (shorthand)")
 	flag.StringVar(password, "p", "", "Password (shorthand)")
@@ -72,8 +67,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  cat README.md | mdgist\n")
 		fmt.Fprintf(os.Stderr, "  mdgist notes.md --ttl 1d\n")
 		fmt.Fprintf(os.Stderr, "  echo '# Hello' | mdgist -u my-doc -p secret\n")
-		fmt.Fprintf(os.Stderr, "  mdgist --delete abc123 --token <owner-token>\n")
-		fmt.Fprintf(os.Stderr, "  mdgist -d abc123 -e <edit-code>\n\n")
+		fmt.Fprintf(os.Stderr, "  mdgist --delete abc123 -e <edit-code>\n")
+		fmt.Fprintf(os.Stderr, "  mdgist -d abc123\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
@@ -89,10 +84,7 @@ func main() {
 
 	// Delete mode
 	if *deleteID != "" {
-		if *ownerToken == "" && *editCode == "" {
-			fatal(fmt.Errorf("--delete requires --token (owner token) or --edit-code"))
-		}
-		err := deletePaste(serverURL, *deleteID, *ownerToken, *editCode, *password)
+		err := deletePaste(serverURL, *deleteID, *editCode, *password)
 		if err != nil {
 			fatal(err)
 		}
@@ -126,9 +118,6 @@ func main() {
 	}
 
 	fmt.Println(serverURL + result.URL)
-	if result.OwnerToken != "" {
-		fmt.Printf("owner-token: %s\n", result.OwnerToken)
-	}
 }
 
 func resolveServer(explicit string) string {
@@ -216,16 +205,13 @@ func createPaste(serverURL string, req createRequest) (*createResponse, error) {
 	return &result, nil
 }
 
-func deletePaste(serverURL, id, ownerToken, editCode, password string) error {
+func deletePaste(serverURL, id, editCode, password string) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest("POST", serverURL+"/api/"+id+"/delete", nil)
 	if err != nil {
 		return err
 	}
 
-	if ownerToken != "" {
-		req.Header.Set("X-Owner-Token", ownerToken)
-	}
 	if editCode != "" {
 		req.Header.Set("X-Edit-Code", editCode)
 	}

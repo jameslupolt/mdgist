@@ -158,7 +158,7 @@ export const homePage = ({
   <script src="/editor.js"></script>
 `);
 
-export const pastePage = ({ id = '', html = '', title = '', canDelete = false, history = false } = {}) => {
+export const pastePage = ({ id = '', html = '', title = '', history = false } = {}) => {
   return layout(title, `
   <main>
     <article class="paste-container">
@@ -168,7 +168,7 @@ export const pastePage = ({ id = '', html = '', title = '', canDelete = false, h
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/raw">Raw</a>
       <a class="btn btn-secondary" href="/${escapeHtml(id)}/edit">Edit</a>
       ${_if(history, `<a class="btn btn-secondary" href="/${escapeHtml(id)}/history">History</a>`)}
-      ${_if(canDelete, `<a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>`)}
+      <a class="btn btn-danger" href="/${escapeHtml(id)}/delete">Delete</a>
     </div>
   </main>
 `);
@@ -231,7 +231,7 @@ export const editPage = (
 `);
 
 export const deletePage = (
-  { id = '', isOwner = false, hasEditCode = false, errors = { editCode: '' } } = {}
+  { id = '', hasEditCode = false, errors = { editCode: '' } } = {}
 ) => {
   return layout(`Delete - ${id}`, `
   <main>
@@ -239,7 +239,7 @@ export const deletePage = (
       <p>Are you sure you want to delete <strong>${escapeHtml(id)}</strong>?</p>
     </div>
     <form method="post" action="/${escapeHtml(id)}/delete">
-      ${_if(!isOwner && hasEditCode, `
+      ${_if(hasEditCode, `
         <div class="form-row">
           <div class="form-group">
             <input

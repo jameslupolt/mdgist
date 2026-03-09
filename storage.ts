@@ -31,28 +31,6 @@ export async function hashPassword(password: string): Promise<string> {
   return hashSecret(password);
 }
 
-export async function hashOwnerToken(token: string): Promise<string> {
-  return hashSecret(token);
-}
-
-export async function verifyOwnerToken(
-  token: string,
-  stored: string,
-): Promise<boolean> {
-  const [salt, expectedHash] = stored.split(':');
-  const data = new TextEncoder().encode(salt + token);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  const actualHash = toHex(hash);
-
-  // timing-safe comparison
-  const a = new TextEncoder().encode(actualHash);
-  const b = new TextEncoder().encode(expectedHash);
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) result |= a[i] ^ b[i];
-  return result === 0;
-}
-
 export async function verifyEditCode(
   code: string,
   stored: string,
@@ -145,14 +123,6 @@ export const storage = {
     return await KV.delete([id]);
   },
 
-  async setOwnerToken(id: string, tokenHash: string, expireIn?: number) {
-    return await KV.set([id, 'owner'], tokenHash, expireIn ? { expireIn } : undefined);
-  },
-
-  async getOwnerTokenHash(id: string): Promise<string | null> {
-    const result = await KV.get<string>([id, 'owner']);
-    return result.value;
-  },
 
   async getHistory(id: string) {
     const versions: { timestamp: number }[] = [];
